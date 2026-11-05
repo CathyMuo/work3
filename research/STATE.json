@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "project": "work3_byd",
+  "updated_at": "2026-11-05",
+  "current_stage": "scoping",
+  "status": "Scoping complete; direction A (PBRO) recommended pending user confirmation. No experiment registered.",
+  "next_action": "User confirms direction/venue/repo visibility; then freeze P0 and P1 gates and write the P0 factory guide.",
+  "target_venue": {"primary": "ICML 2027", "alternative": "SIGIR 2027", "decide_by": "2026-12-15"},
+  "experiment_results": []
+}

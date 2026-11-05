@@ -1,0 +1,38 @@
+# Credentials and machine-local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+configs/local.json
+configs/local.*.json
+!configs/local.example.json
+# Data, models, experiment products, and feedback stay local
+/data/
+/models/
+/checkpoints/
+/indexes/
+/outputs/
+/feedback/
+/logs/
+/wandb/
+/runs/
+/tmp/
+*.pt
+*.pth
+*.safetensors
+*.faiss
+*.index
+# Python and editor artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.DS_Store
+.idea/
+.vscode/
+
+# Local planning analyses; experiment protocol/guide are published separately.
+/report/NEXT_PROTOCOL_PROPOSAL_20261012.md
+/report/REASSESSMENT_AND_NEXT_EXPLORATION_20261012.md

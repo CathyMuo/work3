@@ -1,0 +1,7 @@
+{
+  "model_root": "/path/to/models",
+  "corpus_path": "/path/to/wiki-18.jsonl",
+  "index_path": "/path/to/e5_Flat.index",
+  "retriever_url": "http://127.0.0.1:8000/retrieve",
+  "output_root": "/path/to/outputs"
+}
