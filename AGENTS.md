@@ -7,7 +7,7 @@ It contains no GMST methods or artifacts. Do not modify Work 2 (`../work2_byd`)
 or the stopped projects elsewhere in the workspace; Work 2 code may be copied in
 only with its source commit recorded.
 
-Status (2026-11-05): scoping. Nothing is registered. Read `research/EXPERIMENT_PLAN.md`,
+Status (2026-11-06): P0 and P1 gates frozen; no run registered yet. Read `research/EXPERIMENT_PLAN.md`,
 `research/STATE.json` and `research/DECISION_LOG.md` before changing research code
 or proposing experiments. Pilots P0/P1/P2 must have frozen gates committed before
 their data are seen; gates are never changed after results.
@@ -28,6 +28,11 @@ Target venue: ICML 2027 (primary), SIGIR 2027 (alternative); decide by 2026-12-1
   every run. Do not invent results; report factory execution as pending until real
   results are supplied.
 - `third_party/` dependencies are pinned and unmodified; patches live in this repo.
+  Dr. Zero is cloned beside the repo at the commit in `third_party/PLANNED_UPSTREAMS.md`;
+  its launch scripts are adapted only by `scripts/p0/run_p0.sh`.
+- Branches named `private/*` stay on the development server until the user approves
+  publication (method details before arXiv). Push `main` only; never `--all`/`--mirror`.
+  Frozen private protocols are committed there and their SHA-256 recorded publicly.
 - Run tests with the factory-equivalent Python
   (`/mnt/wh/miniconda3/envs/searchr1/bin/python -m unittest discover -s tests -q`);
   import shared test helpers as `from test_x import ...`, never `from tests.x`.

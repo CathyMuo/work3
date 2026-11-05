@@ -26,3 +26,19 @@ directions, with recursive self-improvement (RSI) in view. The new local report 
 stay local until the user confirms. Nothing is registered.
 
 Decision: `DROP_PBRO_RESCOPE_TO_SELF_EVOLVING_SEARCH`.
+
+## 2026-11-06: Confirm direction; freeze P0 and P1
+
+The user confirmed the re-scoped direction (zero-data self-evolving search agents; method details
+private until arXiv; ICML 2027 primary). Dr. Zero is pinned at
+`98c4a6dd2495e85d8b4d947ab4c030e540c922c5`.
+
+- P0 frozen in `research/protocols/P0_drzero_reproduction.md`: PASS iff the
+  iteration-3 seven-dataset average EM ≥ 0.306 (paper 0.326 − 0.020); computed only
+  by `work3/p0_gate.py`.
+- P1 frozen in a protocol file on local branch `private/p1-ncp` (unpublished until arXiv). SHA-256 of that file:
+  `4727861905cb818eb5b39eb2874c22e350fc89a4ffb7751e5b33e57c4e7b6322`.
+
+No P0 or P1 data exist at freezing time.
+
+Decision: `FREEZE_P0_P1_GATES`.
