@@ -15,7 +15,8 @@ Target venue: ICML 2027 (primary), SIGIR 2027 (alternative); decide by 2026-12-1
 
 ## Collaboration (same as Work 2)
 
-- Develop, test (CPU) and commit on the development server (xd-5090); push to GitHub.
+- Develop, test (CPU) and commit on the development server (xd-5090); push to the public
+  repository https://github.com/CathyMuo/work3_byd (user authorized public, 2026-11-05).
 - The user pulls over HTTPS and runs on the 4×H800 factory server, then pastes back
   summaries. Never require the factory to push, hold write credentials, or edit
   `research/DECISION_LOG.md` / `research/STATE.json`.
