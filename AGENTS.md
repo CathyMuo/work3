@@ -1,7 +1,8 @@
 # Work 3 development rules
 
 Independent project rooted at this directory. Work 3 is a **method** paper
-(working name PBRO: Placebo-Baselined Reflection Optimization for search agents).
+(direction under re-scoping since 2026-11-05: the PBRO reflection-credit idea was
+dropped; the new candidate area is zero-data self-evolving search agents).
 It contains no GMST methods or artifacts. Do not modify Work 2 (`../work2_byd`)
 or the stopped projects elsewhere in the workspace; Work 2 code may be copied in
 only with its source commit recorded.

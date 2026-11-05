@@ -3,8 +3,8 @@
   "project": "work3_byd",
   "updated_at": "2026-11-05",
   "current_stage": "scoping",
-  "status": "Scoping complete; direction A (PBRO) recommended pending user confirmation. No experiment registered.",
-  "next_action": "User confirms direction/venue; then freeze P0 and P1 gates and write the P0 factory guide.",
+  "status": "Re-scoping. PBRO dropped by the user on 2026-11-05; a candidate in zero-data self-evolving (self-play) search agents awaits user confirmation. No experiment registered.",
+  "next_action": "User confirms the new direction, the venue and the factory verl 0.5 + SGLang environment; then freeze P0 and P1 gates and write the P0 factory guide.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",

@@ -16,3 +16,13 @@ The user chose a public GitHub repository from the start
 confirmation; nothing is registered.
 
 Decision: `PUBLISH_PUBLIC_REPOSITORY`.
+
+## 2026-11-05: Drop PBRO and re-scope
+
+The user dropped direction A (PBRO) and asked for a new survey of hot, solid
+directions, with recursive self-improvement (RSI) in view. The new local report is
+`工作三_选题调研_v2_RSI.md`. The candidate area is zero-data self-evolving
+(self-play) search agents, with Dr. Zero as the planned baseline. Method details
+stay local until the user confirms. Nothing is registered.
+
+Decision: `DROP_PBRO_RESCOPE_TO_SELF_EVOLVING_SEARCH`.
