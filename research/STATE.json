@@ -1,24 +1,24 @@
 {
   "schema_version": 1,
-  "project": "work3_byd",
+  "project": "work3",
   "updated_at": "2026-11-06",
   "current_stage": "P0",
-  "status": "Direction confirmed by the user (2026-11-05): zero-data self-evolving search agents (method details private until arXiv). P0 and P1 gates frozen; P0 factory run pending.",
-  "next_action": "Factory: build the drzero environment and run P0 per docs/factory/P0_guide.md; return p0_summary.json. Home: write the P1 replay code on the private branch before P0 finishes.",
+  "status": "Direction confirmed by the user (2026-11-05): zero-data self-evolving search agents, noise-calibrated proposer reward (NCP). P0 and P1 gates frozen; P0 factory run pending.",
+  "next_action": "Factory: build the drzero environment and run P0 per docs/factory/P0_guide.md; return p0_summary.json. Home: write the P1 replay code before P0 finishes.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
     "decide_by": "2026-12-15"
   },
   "experiment_results": [],
-  "repository": "https://github.com/CathyMuo/work3_byd (public, authorized by user 2026-11-05)",
+  "repository": "https://github.com/CathyMuo/work3 (public; renamed from work3_byd on 2026-11-06; method code public)",
   "frozen_gates": {
     "P0": {
       "file": "research/protocols/P0_drzero_reproduction.md",
       "rule": "iter-3 7-dataset average EM >= 0.306"
     },
     "P1": {
-      "file": "private protocol on branch private/p1-ncp (not published)",
+      "file": "research/protocols/P1_noise_diagnosis.md",
       "sha256": "4727861905cb818eb5b39eb2874c22e350fc89a4ffb7751e5b33e57c4e7b6322"
     }
   },

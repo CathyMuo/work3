@@ -17,7 +17,8 @@ Target venue: ICML 2027 (primary), SIGIR 2027 (alternative); decide by 2026-12-1
 ## Collaboration (same as Work 2)
 
 - Develop, test (CPU) and commit on the development server (xd-5090); push to the public
-  repository https://github.com/CathyMuo/work3_byd (user authorized public, 2026-11-05).
+  repository https://github.com/CathyMuo/work3 (user authorized public, 2026-11-05;
+  renamed from work3_byd and fully public including method code, 2026-11-06).
 - The user pulls over HTTPS and runs on the 4×H800 factory server, then pastes back
   summaries. Never require the factory to push, hold write credentials, or edit
   `research/DECISION_LOG.md` / `research/STATE.json`.
@@ -30,9 +31,6 @@ Target venue: ICML 2027 (primary), SIGIR 2027 (alternative); decide by 2026-12-1
 - `third_party/` dependencies are pinned and unmodified; patches live in this repo.
   Dr. Zero is cloned beside the repo at the commit in `third_party/PLANNED_UPSTREAMS.md`;
   its launch scripts are adapted only by `scripts/p0/run_p0.sh`.
-- Branches named `private/*` stay on the development server until the user approves
-  publication (method details before arXiv). Push `main` only; never `--all`/`--mirror`.
-  Frozen private protocols are committed there and their SHA-256 recorded publicly.
 - Run tests with the factory-equivalent Python
   (`/mnt/wh/miniconda3/envs/searchr1/bin/python -m unittest discover -s tests -q`);
   import shared test helpers as `from test_x import ...`, never `from tests.x`.

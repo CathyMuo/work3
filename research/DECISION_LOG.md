@@ -42,3 +42,15 @@ private until arXiv; ICML 2027 primary). Dr. Zero is pinned at
 No P0 or P1 data exist at freezing time.
 
 Decision: `FREEZE_P0_P1_GATES`.
+
+## 2026-11-06: Rename repository and publish everything
+
+At the user's request the GitHub repository was renamed from `work3_byd` to
+`https://github.com/CathyMuo/work3` (old URLs redirect) and the home directory
+moved to `/mnt/wh/RAG/work3`. The user chose to keep Work 3 fully public like
+Work 2, including the P1 protocol and later method code. The private branch was
+fast-forwarded into `main`; `research/protocols/P1_noise_diagnosis.md` is
+unchanged, so its SHA-256 still equals the value recorded above (its header
+sentence about living on a local branch is now historical).
+
+Decision: `RENAME_TO_WORK3_AND_PUBLISH_ALL`.

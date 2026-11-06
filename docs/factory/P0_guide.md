@@ -13,7 +13,7 @@
 
 ```bash
 cd <工作目录>
-git clone https://github.com/CathyMuo/work3_byd.git      # 已有就 git pull
+git clone https://github.com/CathyMuo/work3.git          # 旧的 work3_byd 克隆可改 remote：git remote set-url origin https://github.com/CathyMuo/work3.git
 git clone https://github.com/facebookresearch/drzero.git
 cd drzero && git checkout 98c4a6dd2495e85d8b4d947ab4c030e540c922c5 && cd ..
 ```
@@ -57,7 +57,7 @@ export CORPUS_JSONL=<路径>/wiki-18.jsonl
 export INDEX_PATH=<路径>/e5_Flat.index
 export E5_MODEL=<路径>/e5-base-v2          # 能联网可以不设
 export NGPU=4
-P0=<工作目录>/work3_byd/scripts/p0/run_p0.sh
+P0=<工作目录>/work3/scripts/p0/run_p0.sh
 ```
 
 所有产物在 `$DRZERO_DIR/{data,checkpoints}`，日志和汇总在 `$DRZERO_DIR/work3_p0/`。
