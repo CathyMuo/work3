@@ -73,3 +73,22 @@ assistant-turn token boundaries and the re-tokenised text (the rollout-alignment
 caveat in the pinned upstream fix). This is reported only and is not a gate.
 
 Decision: `P0_WORKFLOW_FIX_P0_R1`.
+
+## 2026-11-06: Release the P1 implementation (tag `p1-r1`)
+
+Added the P1 rollout and replay code (`work3/p1_agent.py`, `work3/p1_run.py`),
+the frozen-rule summary (`work3/p1_summary.py`), the upstream prompt parity
+check (`work3/p1_parity.py`), `scripts/p1/run_p1.sh` and
+`docs/factory/P1_guide.md`. The summary script is committed before any P1
+rollout, as the protocol requires.
+
+Implementation details the protocol left open are recorded in its addendum
+dated 2026-11-06. The text before the addendum still matches the recorded
+SHA-256.
+
+The factory audit's trajectory-consistency request is covered by
+`p1_parity.py`. On synthetic episodes (multi-query search, 5-turn limit, no
+tool call), the rendered prompts matched upstream incremental construction
+4/4, in both text and token ids.
+
+Decision: `RELEASE_P1_IMPLEMENTATION_P1_R1`.

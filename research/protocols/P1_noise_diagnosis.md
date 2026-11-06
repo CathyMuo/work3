@@ -79,3 +79,38 @@ mid-pass-rate ones, not merely that noise exists.
 separately before P2 data). `NO-GO` → stop this direction and re-scope with the
 user. Results are summarised by a script committed before the P1 rollouts start;
 the factory returns only that summary.
+
+## Addendum 2026-11-06 (before any P1 data; implementation `p1-r1`)
+
+The hypothesis, sampling, rollout counts, estimates, thresholds and decision rule
+above are unchanged. These items fix details the protocol left open. All were
+written before any P0 or P1 data existed.
+
+1. **Passage permutation with several queries.** Each search call may contain
+   several queries, so a tool response holds three passages per query. The
+   non-identity permutation is drawn independently for each query's top-3
+   block. Passage text is unchanged and the "Doc i" labels follow the new order.
+   Seeds: `numpy.random.default_rng([20261106, pool, qid, i, j])`.
+2. **Prompt construction.** `work3/p1_agent.py` re-renders the full conversation
+   with the chat template at every turn. Tool-call parsing mirrors SGLang
+   0.4.6.post5 `Qwen25Detector` plus verl's argument decoding; tool responses
+   mirror verl `search_r1_like_utils`; sampling and length limits mirror Dr.
+   Zero's proposer reward rollout. A home-server check found the prompts
+   identical (text and token ids) to upstream `AsyncRolloutRequest`'s incremental
+   construction on synthetic episodes. `work3/p1_parity.py` repeats the check on
+   the factory rollouts and reports the result (reported only, not a gate).
+3. **Unreplayable originals.** Some originals end without a generated final
+   assistant turn, because the context filled after a tool response or before
+   generation. For these, both replays take the original outcome, so they add
+   zero noise; this is a conservative choice. The count is reported.
+4. **Failed searches.** Tool responses without passages (search error or empty
+   query list) are kept unchanged in replays and counted.
+5. **Rates.** The new-search rate is computed over all replays, including
+   unreplayable ones. The group-size rule applies to each pool separately.
+6. **Serving.** Each pool's reward solver is served by SGLang with tp 1 and
+   dp = number of GPUs; this affects memory only. Both pools use the
+   Qwen2.5-3B-Instruct tokenizer and chat template, which the solver checkpoints
+   inherit.
+
+The text of this file before this addendum has the SHA-256 recorded on
+2026-11-06 (`4727861905cb818eb5b39eb2874c22e350fc89a4ffb7751e5b33e57c4e7b6322`).
