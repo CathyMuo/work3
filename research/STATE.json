@@ -3,8 +3,8 @@
   "project": "work3",
   "updated_at": "2026-11-06",
   "current_stage": "P0",
-  "status": "Direction confirmed by the user (2026-11-05): zero-data self-evolving search agents, noise-calibrated proposer reward (NCP). P0 and P1 gates frozen; P0 factory run pending.",
-  "next_action": "Factory: build the drzero environment and run P0 per docs/factory/P0_guide.md; return p0_summary.json. Home: write the P1 replay code before P0 finishes.",
+  "status": "P0 and P1 gates frozen. Factory audit #1 (2026-11-06) found 2 blockers and 5 risks in the P0 workflow; all fixed in tag p0-r1 (protocol addendum 2026-11-06). P0 factory run pending.",
+  "next_action": "Factory: run P0 at tag p0-r1 per docs/factory/P0_guide.md and return the section-7 outputs. Home: write the P1 replay code and summary script (with trajectory-boundary consistency counts) before P0 finishes.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -24,5 +24,6 @@
   },
   "upstreams": {
     "drzero": "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
-  }
+  },
+  "p0_release": "p0-r1"
 }

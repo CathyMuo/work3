@@ -63,3 +63,45 @@ new decision, not part of this protocol.
 
 Only `p0_summary.json`, the pool check output and stage timings are returned to
 the home server.
+
+## Addendum 2026-11-06 (before the first P0 run; factory audit #1)
+
+The decision rule, thresholds, model, hyperparameters, step counts and the
+evaluation set are unchanged. These items only make the frozen setup runnable on
+the factory node; none of them changes what is trained or how the gate is scored.
+
+1. **In-training validation file.** Upstream solver scripts validate on
+   `data/test_1200.parquet` (`trainer.test_freq=25`), which no upstream script
+   creates (present only as a reference since upstream's initial commit).
+   `prepare` now builds it with `python -m work3.val_subset`: 1200 rows of
+   `data/test.parquet`, stratified by `data_source` with proportional
+   largest-remainder allocation, numpy seed 20261106. It feeds training-time
+   validation logs only; the gate still uses the full `test.parquet`.
+2. **Offline data.** Upstream `process_train.py` / `process_test.py` always call
+   `hf_hub_download`, and the factory mirror returns 404. With `TRAIN_PARQUET` /
+   `TEST_PARQUET` set, `prepare` runs the unmodified scripts through
+   `python -m work3.p0_launch offline-hf`, which returns the local
+   `PeterJinGo/nq_hotpotqa_train` files instead of downloading. The factory
+   verified the local `test.parquet` (51,713 rows) against the FlashRAG originals,
+   row by row. Because upstream `process_test.py` only logs download errors,
+   `prepare` now checks the output files explicitly.
+3. **Evaluation batch size.** Evaluation sets `data.val_batch_size=256` (upstream
+   default `null` = one batch of 51,713). Greedy decoding and EM are unchanged.
+4. **Ports.** The retriever (upstream hard-codes 8000) and the proposer-reward
+   SGLang server (8001) move to `RET_PORT` (default 8100) and `REWARD_PORT`
+   (default 8101) because 8000 is used by another project on the factory node.
+   The retriever runs unmodified through `python -m work3.p0_launch serve`, which
+   only overrides the port passed to `uvicorn.run`. The tool config and
+   `reward_kwargs.base_url` are rewritten accordingly. `patch` fails if any
+   reference to 8000 / 8001 remains.
+5. **Process cleanup.** Upstream `kill -9 $(lsof -t -i :8000)` lines become
+   no-ops (`lsof` is absent and they would target other projects). Every process
+   started by a stage carries `WORK3_P0_TAG=work3-p0` in its environment, and
+   cleanup kills only tagged processes. The global `pkill` / `ray stop --force`
+   calls are removed. `check` now fails if the two ports are taken or if other
+   GPU compute processes are running (override: `ALLOW_BUSY_GPU=1`).
+6. **Retriever readiness.** After each upstream retriever launch, `patch` inserts
+   `scripts/p0/wait_retriever.sh`, which blocks until the retriever answers
+   (max 30 min) or stops the stage. Upstream only `sleep 30`s, and the 61 GB
+   index on NAS can take minutes to load. Searches sent before that would fail
+   silently inside rollouts.

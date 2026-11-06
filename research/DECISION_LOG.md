@@ -54,3 +54,22 @@ unchanged, so its SHA-256 still equals the value recorded above (its header
 sentence about living on a local branch is now historical).
 
 Decision: `RENAME_TO_WORK3_AND_PUBLISH_ALL`.
+
+## 2026-11-06: Fix the P0 workflow after factory audit #1 (tag `p0-r1`)
+
+The factory audited the P0 workflow before any run. Verified on the pinned code
+and fixed:
+
+- Blocker: missing `data/test_1200.parquet`. `prepare` now builds a stratified 1200-row subset.
+- Blocker: `prepare` failed offline. Local parquet files are now used through a runtime `hf_hub_download` substitute; upstream files are untouched.
+- Risks: unbounded evaluation batch (now 256); global `pkill` that would kill another project's retriever (cleanup now kills only environment-tagged processes); hard-coded ports 8000/8001 (now configurable, default 8100/8101); missing `lsof` (upstream port kills disabled, ports checked in `check`).
+- Added: the stage waits until the retriever answers, instead of upstream's fixed 30 s.
+
+All of these are recorded in the P0 protocol addendum dated 2026-11-06. The gate
+and training setup are unchanged.
+
+Accepted for P1: the replay code must report per-rollout consistency between
+assistant-turn token boundaries and the re-tokenised text (the rollout-alignment
+caveat in the pinned upstream fix). This is reported only and is not a gate.
+
+Decision: `P0_WORKFLOW_FIX_P0_R1`.
