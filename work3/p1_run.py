@@ -92,8 +92,13 @@ class Clients:
         for attempt in range(5):
             try:
                 r = await self.client.post(self.gen_url, json=payload)
-                choice = r.json()["choices"][0]
+                body = r.json()
+                choice = body["choices"][0]
                 self.calls["generate"] += 1
+                usage = body.get("usage") or {}
+                self.calls["prompt_tokens"] = self.calls.get("prompt_tokens", 0) + int(usage.get("prompt_tokens") or 0)
+                self.calls["completion_tokens"] = (self.calls.get("completion_tokens", 0)
+                                                   + int(usage.get("completion_tokens") or 0))
                 return choice["text"], str(choice.get("finish_reason") or "stop")
             except Exception:  # noqa: BLE001 - mirror upstream retry, then raise
                 if attempt == 4:

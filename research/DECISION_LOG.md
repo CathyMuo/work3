@@ -92,3 +92,33 @@ tool call), the rendered prompts matched upstream incremental construction
 4/4, in both text and token ids.
 
 Decision: `RELEASE_P1_IMPLEMENTATION_P1_R1`.
+
+## 2026-11-06: Freeze P2 and release its implementation (tag `p2-r1`)
+
+P2 is frozen in `research/protocols/P2_ncp_pilot.md` before any P0, P1 or P2
+data exist. Three arms differ only in the proposer difficulty term:
+
+- Dr. Zero: reuses the P0 run.
+- Beta smoothing: n = 7, a deliberately generous budget for the baseline.
+- NCP: the Dr. Zero term × the signal share w estimated from two same-prefix
+  replays per solver rollout, as in P1.
+
+GO iff all three hold:
+
+- iteration-3 average EM(NCP) − EM(Dr. Zero) ≥ 0.020;
+- EM(NCP) − EM(Beta) ≥ 0.010;
+- NCP shows no decline from iteration 2 to 3.
+
+P2 runs only if P0 is PASS and P1 is GO.
+
+Code:
+
+- `work3/ncp_reward.py`: drop-in proposer reward.
+- `work3/p2_gate.py`.
+- `scripts/p2/run_p2.sh`: one git worktree per arm, sharing P0's seed, test and
+  validation files.
+- `run_p0.sh` gains `P0_REWARD_ARM`. The default behaviour is unchanged
+  (checked by a patch dry run).
+- `docs/factory/P2_guide.md`.
+
+Decision: `FREEZE_P2_RELEASE_P2_R1`.

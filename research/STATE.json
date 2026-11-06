@@ -3,8 +3,8 @@
   "project": "work3",
   "updated_at": "2026-11-06",
   "current_stage": "P0",
-  "status": "P0 workflow released (p0-r1); P1 code released (p1-r1) before any P0/P1 data. P0 factory run pending.",
-  "next_action": "Factory: run P0 (p0-r1, docs/factory/P0_guide.md), then P1 (p1-r1, docs/factory/P1_guide.md); return both summaries. Home: freeze the P2 gate before P1 results arrive.",
+  "status": "P0 (p0-r1), P1 (p1-r1) and P2 (p2-r1) workflows released and P0/P1/P2 gates frozen before any data. P0 factory run pending.",
+  "next_action": "Factory: P0 -> P1 -> (only if P0 PASS and P1 GO, on the home server's go-ahead) P2, per docs/factory/P{0,1,2}_guide.md. Home: review each returned summary; draft the method/theory section while runs proceed.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -20,11 +20,16 @@
     "P1": {
       "file": "research/protocols/P1_noise_diagnosis.md",
       "sha256": "4727861905cb818eb5b39eb2874c22e350fc89a4ffb7751e5b33e57c4e7b6322"
+    },
+    "P2": {
+      "file": "research/protocols/P2_ncp_pilot.md",
+      "rule": "A3(NCP)-A3(DrZero) >= 0.020 and A3(NCP)-A3(Beta) >= 0.010 and A3(NCP) >= A2(NCP); needs P0 PASS and P1 GO"
     }
   },
   "upstreams": {
     "drzero": "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
   },
   "p0_release": "p0-r1",
-  "p1_release": "p1-r1"
+  "p1_release": "p1-r1",
+  "p2_release": "p2-r1"
 }

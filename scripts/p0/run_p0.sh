@@ -17,6 +17,7 @@
 #   RET_PORT (8100) retriever port      REWARD_PORT (8101) proposer-reward SGLang port
 #   GEN_MEM   (unset = upstream 0.8; memory fraction for data generation, only if it OOMs)
 #   ALLOW_BUSY_GPU (0; 1 = let `check` pass while other GPU processes are running)
+#   P0_REWARD_ARM (unset = upstream Dr. Zero reward; beta | ncp = P2 arm, set by scripts/p2/run_p2.sh)
 set -euo pipefail
 
 PIN=98c4a6dd2495e85d8b4d947ab4c030e540c922c5
@@ -37,6 +38,9 @@ CKPT="checkpoints/dr-zero"
 PATCHED="$OUT_ROOT/patched"
 export PYTHONPATH="$DRZERO_DIR:$WORK3_DIR:${PYTHONPATH:-}"
 export WANDB_MODE="${WANDB_MODE:-offline}"
+ARM="${P0_REWARD_ARM:-}"
+case "$ARM" in ""|beta|ncp) ;; *) echo "P0_REWARD_ARM must be empty, beta or ncp"; exit 2 ;; esac
+[ -z "$ARM" ] || export WORK3_REWARD_LOG="$OUT_ROOT/reward_log.jsonl"
 
 mkdir -p "$OUT_ROOT/logs"
 cd "$DRZERO_DIR"
@@ -150,6 +154,7 @@ PY
 }
 
 stage_prepare() {
+  [ -z "$ARM" ] || { log "prepare is P0-only; P2 arms reuse P0's data (scripts/p2/run_p2.sh setup)"; exit 2; }
   need "${CORPUS_JSONL:?set CORPUS_JSONL}"; need "${INDEX_PATH:?set INDEX_PATH}"
   mkdir -p corpus data "$PATCHED"
   ln -sfn "$CORPUS_JSONL" corpus/wiki-18.jsonl
@@ -199,9 +204,23 @@ stage_patch() {
       )
       [ "$FAISS_GPU" = "1" ] || sedargs+=(-e "/^ *--faiss_gpu \\\\\$/d")
       [ -z "${GEN_MEM:-}" ] || sedargs+=(-e "s#^rollout_memory_utilization=0.8\$#rollout_memory_utilization=$GEN_MEM#")
+      if [ -n "$ARM" ] && [ "$kind" = challenger ]; then
+        sedargs+=(
+          -e "s#custom_reward_function.name=compute_challenger_score_batch \\\\\$#custom_reward_function.name=compute_challenger_score_batch_arm \\\\#"
+          -e "s#custom_reward_function.path=verl/custom_reward/reward_function.py \\\\\$#custom_reward_function.path=$WORK3_DIR/work3/ncp_reward.py \\\\\\n    +custom_reward_function.reward_kwargs.arm=$ARM \\\\#"
+        )
+      fi
       sed "${sedargs[@]}" "iter${t}_${kind}.sh" > "$PATCHED/iter${t}_${kind}.sh"
     done
   done
+  if [ -n "$ARM" ]; then
+    local n_arm; n_arm=$(grep -l "reward_kwargs.arm=$ARM" "$PATCHED"/iter*_challenger.sh | wc -l)
+    [ "$n_arm" = 3 ] || { log "patch FAILED: reward arm inserted in $n_arm of 3 proposer scripts"; exit 2; }
+    if grep -n "verl/custom_reward/reward_function.py" "$PATCHED"/iter*_challenger.sh; then
+      log "patch FAILED: upstream reward still referenced"; exit 2
+    fi
+    log "proposer reward arm: $ARM"
+  fi
   # every upstream port reference must be gone
   if grep -n "800[01]\|lsof" "$PATCHED"/iter*.sh "$PATCHED/search_tool_config.yaml"; then
     log "patch FAILED: upstream port references left"; exit 2
