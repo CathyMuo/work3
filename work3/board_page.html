@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Work 3 看板</title>
+<style>
+:root { --bg:#f6f7f9; --card:#fff; --ink:#1d2430; --mute:#6a7383; --line:#e1e5eb;
+        --ok:#1f8f4e; --run:#2563eb; --bad:#c43c3c; --warn:#b7791f; --pend:#9aa3b2; }
+@media (prefers-color-scheme: dark) { :root { --bg:#14171c; --card:#1c2027; --ink:#e6e9ee; --mute:#9aa3b2;
+        --line:#2c323c; --ok:#4cc38a; --run:#6ea0ff; --bad:#ff7a7a; --warn:#f0b75a; --pend:#6a7383; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.55 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; }
+header h1 { font-size:18px; margin:0; }
+nav button { border:1px solid var(--line); background:var(--card); color:var(--ink); padding:5px 12px; border-radius:6px; cursor:pointer; }
+nav button.on { border-color:var(--run); color:var(--run); }
+main { padding:16px 20px; max-width:1280px; margin:0 auto; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:14px; }
+.card h2 { font-size:15px; margin:0 0 10px; }
+.mute { color:var(--mute); }
+table { border-collapse:collapse; width:100%; margin:6px 0 10px; }
+th, td { border-bottom:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top; }
+th { color:var(--mute); font-weight:600; }
+code { background:rgba(127,127,127,.12); padding:1px 4px; border-radius:4px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+.pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; border:1px solid currentColor; }
+.done { color:var(--ok); } .running { color:var(--run); } .failed { color:var(--bad); } .stalled { color:var(--warn); } .pending { color:var(--pend); }
+.stages { display:flex; flex-wrap:wrap; gap:6px; }
+.stage { border:1px solid var(--line); border-radius:6px; padding:3px 8px; font-size:12.5px; }
+.bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin:4px 0 8px; }
+.bar > i { display:block; height:100%; background:var(--run); }
+pre { white-space:pre-wrap; word-break:break-all; font-size:12px; background:rgba(127,127,127,.08); padding:8px; border-radius:6px; max-height:360px; overflow:auto; }
+details { border-top:1px solid var(--line); padding:6px 0; } summary { cursor:pointer; }
+.big { font-size:22px; font-weight:650; }
+svg { width:100%; height:140px; }
+.lnk { text-decoration:underline dotted; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Work 3 · 零数据自博弈搜索智能体</h1>
+  <nav><button id="t-live" class="on">实验进度</button> <button id="t-res">研究说明</button></nav>
+  <span class="mute" id="upd"></span>
+</header>
+<main>
+  <section id="live"></section>
+  <section id="res" hidden></section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const STATE = {done:"✓ 完成", running:"⟳ 进行中", failed:"✗ 失败", stalled:"⚠ 长时间无输出", pending:"○ 待运行"};
+const hms = s => { if (s == null) return "—"; s = Math.round(s); const h = Math.floor(s/3600), m = Math.floor(s%3600/60);
+  return h ? `${h} 小时 ${m} 分` : `${m} 分 ${s%60} 秒`; };
+const pct = x => x == null ? "—" : (x*100).toFixed(1) + "%";
+let openLog = null;
+
+function spark(vals, label) {
+  if (!vals || vals.length < 2) return `<p class="mute">${esc(label)}：数据点不足</p>`;
+  const W = 600, H = 120, lo = Math.min(...vals), hi = Math.max(...vals), span = (hi - lo) || 1;
+  const pts = vals.map((v, i) => `${(i/(vals.length-1)*W).toFixed(1)},${(H - (v-lo)/span*(H-10) - 5).toFixed(1)}`).join(" ");
+  return `<div class="mute">${esc(label)}（${vals.length} 点，最小 ${lo.toFixed(3)}，最大 ${hi.toFixed(3)}，最新 ${vals[vals.length-1].toFixed(3)}）</div>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polyline fill="none" stroke="currentColor" stroke-width="2" points="${pts}" style="color:var(--run)"/></svg>`;
+}
+
+function gpuCard(g) {
+  if (!g) return `<div class="card"><h2>GPU</h2><p class="mute">nvidia-smi 不可用</p></div>`;
+  return `<div class="card"><h2>GPU</h2><table><tr><th>卡</th><th>利用率</th><th>显存</th><th>功率</th></tr>` +
+    g.map(x => `<tr><td>${esc(x.index)} ${esc(x.name)}</td><td>${x.util ?? "—"}%</td>
+      <td>${x.mem_used != null ? (x.mem_used/1024).toFixed(1) : "—"} / ${x.mem_total != null ? (x.mem_total/1024).toFixed(0) : "—"} GB</td>
+      <td>${x.power ?? "—"} / ${x.power_limit ?? "—"} W</td></tr>`).join("") +
+    `</table><p class="mute">参考：反向传播阶段约 450–560 W、利用率 90% 以上属正常；rollout 尾段（少数长轨迹在等检索和多轮生成）功率掉到 100–150 W、利用率接近 0 是预期现象。如果 rollout 前半段（并发多的时候）利用率也长时间低于 30%，说明并发不足，请反馈。</p></div>`;
+}
+
+function runCard(r) {
+  if (!r.exists) return "";
+  const cur = r.current;
+  let h = `<div class="card"><h2>${esc(r.title)} <span class="mute">${esc(r.dir)}</span></h2>`;
+  h += `<div class="stages">` + r.stages.map(s => `<span class="stage ${s.state}" title="${esc(s.name)}">${esc(STATE[s.state].split(" ")[0])} ${esc(s.label)}${s.seconds ? " · " + hms(s.seconds) : ""}</span>`).join("") + `</div>`;
+  if (cur) {
+    h += `<p><b>当前：</b>${esc(cur.label)} <span class="pill ${cur.state}">${STATE[cur.state]}</span>` +
+         (cur.idle_seconds != null ? ` <span class="mute">日志 ${hms(cur.idle_seconds)} 前更新</span>` : "") + `</p>`;
+    if (cur.fraction != null) h += `<div class="mute">训练步数进度 ${pct(cur.fraction)}</div><div class="bar"><i style="width:${(cur.fraction*100).toFixed(1)}%"></i></div>`;
+    for (const [k, b] of Object.entries(cur.bars || {})) {
+      h += `<div class="mute">${esc(k)}：${b.n}/${b.total}（${b.pct}%）${esc(b.info)}</div><div class="bar"><i style="width:${b.pct}%"></i></div>`;
+    }
+    if (cur.last_step) h += `<div class="mute">最近一步：` + Object.entries(cur.last_step).map(([k,v]) => `${esc(k)}=${typeof v === "number" ? +v.toFixed(4) : esc(v)}`).join("，") + `</div>`;
+  } else if (r.stages.every(s => s.state === "done")) {
+    h += `<p class="done">全部阶段已完成。</p>`;
+  } else {
+    h += `<p class="mute">没有正在运行的阶段。</p>`;
+  }
+  h += `<p>预计剩余：<b>${hms(r.eta_seconds)}</b> <span class="mute">（已完成阶段按实测耗时，未跑过的阶段按指导估计）</span></p>`;
+  if (r.kind === "p0") {
+    const ev = Object.entries(r.evals || {});
+    if (ev.length) {
+      h += `<table><tr><th>评测</th><th>7 数据集平均 EM</th><th>说明</th></tr>` + ev.map(([t, e]) =>
+        `<tr><td>${t === "0" ? "基座" : "第 " + t + " 轮"}</td><td class="big">${e && e.average != null ? e.average.toFixed(4) : "—"}</td>
+         <td>${t === "3" && e && e.average != null ? (e.average >= r.threshold ? `<span class="done">≥ 门槛 ${r.threshold}</span>` : `<span class="failed">< 门槛 ${r.threshold}</span>`) : ""}${e && e.problems && e.problems.length ? esc(e.problems.join("; ")) : ""}</td></tr>`).join("") + `</table>`;
+    } else h += `<p class="mute">P0 门槛：第 3 轮 7 数据集平均 EM ≥ ${r.threshold}（论文 0.326）。评测完成后在此显示。</p>`;
+  }
+  if (r.summary) h += `<p>汇总判定：<span class="pill ${r.summary.verdict === "PASS" || r.summary.verdict === "GO" ? "done" : (r.summary.verdict === "INVALID" ? "stalled" : "failed")}">${esc(r.summary.verdict)}</span> ${esc((r.summary.problems || []).join("; "))}</p>`;
+  const pc = Object.entries(r.pool_checks || {});
+  if (pc.length) h += `<p class="mute">题池检查：` + pc.map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "✗"}`).join("，") + `</p>`;
+  if (r.retriever) { const q = r.retriever;
+    h += `<p class="mute">检索服务（近 ${q.window_seconds}s）：${q.requests_per_second} 次/秒，p50 ${q.p50_ms ?? "—"} ms，p95 ${q.p95_ms ?? "—"} ms，进行中 ${q.in_flight}，错误 ${q.errors_in_window}（累计 ${q.total_requests} 次）</p>`; }
+  if (r.curves && r.curves.stage) {
+    h += `<details open><summary>训练曲线 · ${esc(r.curves.stage)}</summary>`;
+    if (r.curves.reward && r.curves.reward.length) h += spark(r.curves.reward, "出题者奖励（每步 Final rewards Avg）");
+    const sc = (r.curves.steps || []).map(x => x["critic/score/mean"]).filter(x => x != null);
+    if (sc.length) h += spark(sc, "critic/score/mean（每步）");
+    h += `</details>`;
+  }
+  const e = r.errors;
+  const uf = Object.entries(e.undefined_function_names || {}).map(([k,v]) => `${esc(k)}×${v}`).join("，");
+  h += `<p>告警：Traceback ${e.traceback}，FAILED ${e.failed}，显存不足 ${e.oom}，无效工具名 ${e.undefined_function}${uf ? "（" + uf + "）" : ""}</p>`;
+  if (e.last_lines && e.last_lines.length) h += `<pre>${esc(e.last_lines.join("\n"))}</pre>`;
+  h += `<details ${openLog === r.id ? "open" : ""} data-log="${esc(r.id)}"><summary>最新日志（最后 80 行）</summary><pre id="log-${esc(r.id)}">点开后加载…</pre></details>`;
+  return h + `</div>`;
+}
+
+async function refreshLog(id) {
+  try { const t = await (await fetch("/api/log?run=" + encodeURIComponent(id))).json();
+    const el = document.getElementById("log-" + id); if (el) el.textContent = (t.file ? "[" + t.file + "]\n" : "") + t.lines.join("\n"); } catch (e) {}
+}
+
+async function tick() {
+  try {
+    const s = await (await fetch("/api/state")).json();
+    let h = gpuCard(s.gpus);
+    if (s.p2) h += `<div class="card"><h2>P2 判定</h2><span class="pill ${s.p2.verdict === "GO" ? "done" : "failed"}">${esc(s.p2.verdict)}</span><pre>${esc(JSON.stringify(s.p2.primary || s.p2.problems, null, 2))}</pre></div>`;
+    const shown = s.runs.filter(r => r.exists);
+    h += shown.length ? shown.map(runCard).join("") : `<div class="card mute">还没有找到运行目录。请设置 DRZERO_DIR（以及 P2 的 ARM_ROOT）后重启看板。</div>`;
+    $("#live").innerHTML = h;
+    document.querySelectorAll("details[data-log]").forEach(d => {
+      d.addEventListener("toggle", () => { if (d.open) { openLog = d.dataset.log; refreshLog(openLog); } else if (openLog === d.dataset.log) openLog = null; });
+    });
+    if (openLog) refreshLog(openLog);
+    $("#upd").textContent = "更新于 " + new Date(s.now * 1000).toLocaleTimeString();
+  } catch (e) { $("#upd").textContent = "读取失败：" + e; }
+}
+
+async function loadResearch() {
+  const r = await (await fetch("/api/research")).json();
+  const st = r.state || {};
+  const kv = (o) => `<table>` + Object.entries(o || {}).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(typeof v === "object" ? JSON.stringify(v, null, 1) : v)}</td></tr>`).join("") + `</table>`;
+  $("#res").innerHTML =
+    `<div class="card"><h2>当前阶段与下一步（research/STATE.json）</h2>${kv({current_stage: st.current_stage, status: st.status, next_action: st.next_action, updated_at: st.updated_at})}</div>` +
+    `<div class="card"><h2>目标会议</h2>${kv(st.target_venue)}</div>` +
+    `<div class="card"><h2>已冻结的门槛</h2>${kv(st.frozen_gates)}</div>` +
+    `<div class="card"><h2>实验计划（research/EXPERIMENT_PLAN.md）</h2>${r.plan_html}</div>` +
+    `<div class="card"><h2>决策记录（research/DECISION_LOG.md，新的在前）</h2>` +
+    r.decisions.map(d => `<details><summary>${esc(d.title)}</summary>${d.html}</details>`).join("") + `</div>`;
+}
+
+$("#t-live").onclick = () => { $("#live").hidden = false; $("#res").hidden = true; $("#t-live").classList.add("on"); $("#t-res").classList.remove("on"); };
+$("#t-res").onclick = () => { $("#live").hidden = true; $("#res").hidden = false; $("#t-res").classList.add("on"); $("#t-live").classList.remove("on"); loadResearch(); };
+tick(); setInterval(tick, 8000);
+</script>
+</body>
+</html>

@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "project": "work3",
-  "updated_at": "2026-11-06",
+  "updated_at": "2026-11-09",
   "current_stage": "P0",
-  "status": "P0 (p0-r1), P1 (p1-r1) and P2 (p2-r1) workflows released and P0/P1/P2 gates frozen before any data. P0 factory run pending.",
-  "next_action": "Factory: P0 -> P1 -> (only if P0 PASS and P1 GO, on the home server's go-ahead) P2, per docs/factory/P{0,1,2}_guide.md. Home: review each returned summary; draft the method/theory section while runs proceed.",
+  "status": "P0 running at the factory (iteration 1, started 2026-11-09 with p0-r1 plus two local fixes). Feedback #2 fixed in p0-r2 / p1-r2 / p2-r2 (same commit): retriever probe, absolute Hydra config path, pinned environment, proposer rollout memory 0.45, Python 3.9 import fix, read-only board.",
+  "next_action": "Factory: after the current stage ends, switch to p0-r2 (docs/factory/P0_guide.md section 0), re-run patch, continue P0; keep the board open. Home: review returned summaries.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -29,7 +29,7 @@
   "upstreams": {
     "drzero": "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
   },
-  "p0_release": "p0-r1",
-  "p1_release": "p1-r1",
-  "p2_release": "p2-r1"
+  "p0_release": "p0-r2",
+  "p1_release": "p1-r2",
+  "p2_release": "p2-r2"
 }

@@ -32,6 +32,7 @@ CKPT="$DRZERO_DIR/checkpoints/dr-zero"
 TOOL_CFG="$DRZERO_DIR/config/search_tool_config.yaml"   # read only for the tool schema
 
 mkdir -p "$P1_OUT/logs"
+export WORK3_RETRIEVER_STATS="$P1_OUT/logs/retriever_stats.json"
 cd "$DRZERO_DIR"
 
 log() { echo "[p1 $(date '+%F %T')] $*"; }
@@ -80,7 +81,7 @@ timed() {
   ( export WORK3_P0_TAG="$TAG"; "$@" ) 2>&1 | tee "$P1_OUT/logs/$name.log"
   local rc=${PIPESTATUS[0]}
   set -e
-  echo "$name $(( $(date +%s) - t0 ))" >> "$P1_OUT/timings.txt"
+  echo "$name $(( $(date +%s) - t0 )) $rc $(date +%s)" >> "$P1_OUT/timings.txt"   # name seconds exit end
   cleanup_servers
   if [ "$rc" -ne 0 ]; then log "FAILED $name (exit $rc)"; exit "$rc"; fi
   log "done $name"

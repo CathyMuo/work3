@@ -53,6 +53,83 @@ def install_offline_hf(mapping: dict[str, str]) -> None:
         pass
 
 
+class LatencyStats:
+    """ASGI wrapper: per-request latency of the retriever, summarised to a JSON file.
+
+    Read-only observability for the board (is rollout time spent waiting on search?).
+    Writes $WORK3_RETRIEVER_STATS at most every `every` seconds; never alters responses.
+    """
+
+    def __init__(self, app, path: str | None, every: float = 15.0, window: float = 300.0):
+        import collections
+        import threading
+
+        self.app, self.path, self.every, self.window = app, path, every, window
+        self.events = collections.deque()          # (end_time, seconds, status)
+        self.in_flight = 0
+        self.total = 0
+        self.errors = 0
+        self.last_write = 0.0
+        self.lock = threading.Lock()
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+        import time
+
+        status = {"code": 0}
+
+        async def send_wrapper(message):
+            if message.get("type") == "http.response.start":
+                status["code"] = int(message.get("status", 0))
+            await send(message)
+
+        t0 = time.perf_counter()
+        with self.lock:
+            self.in_flight += 1
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            self.record(time.time(), time.perf_counter() - t0, status["code"])
+
+    def record(self, now: float, seconds: float, code: int) -> None:
+        with self.lock:
+            self.in_flight -= 1
+            self.total += 1
+            self.errors += int(code >= 500 or code == 0)
+            self.events.append((now, seconds, code))
+            while self.events and now - self.events[0][0] > self.window:
+                self.events.popleft()
+            due = self.path and now - self.last_write >= self.every
+            if due:
+                self.last_write = now
+                snap = self.snapshot(now)
+        if due:
+            self.write(snap)
+
+    def snapshot(self, now: float) -> dict:
+        lat = sorted(s for _, s, _ in self.events)
+        q = lambda p: round(lat[min(len(lat) - 1, int(p * len(lat)))] * 1000, 1) if lat else None
+        span = min(self.window, max(1.0, now - self.events[0][0])) if self.events else self.window
+        return {"updated": now, "window_seconds": self.window, "requests_in_window": len(lat),
+                "requests_per_second": round(len(lat) / span, 3),
+                "errors_in_window": sum(1 for _, _, c in self.events if c >= 500 or c == 0),
+                "p50_ms": q(0.5), "p95_ms": q(0.95), "max_ms": q(1.0),
+                "mean_ms": round(sum(lat) / len(lat) * 1000, 1) if lat else None,
+                "in_flight": self.in_flight, "total_requests": self.total, "total_errors": self.errors}
+
+    def write(self, snap: dict) -> None:
+        import json as _json
+
+        tmp = f"{self.path}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                _json.dump(snap, f)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass
+
+
 def install_port_override(port: int) -> None:
     import uvicorn
 
@@ -61,6 +138,10 @@ def install_port_override(port: int) -> None:
     def run(app, *args, **kwargs):
         kwargs["port"] = port
         print(f"[p0_launch] uvicorn port forced to {port}", flush=True)
+        stats_path = os.environ.get("WORK3_RETRIEVER_STATS")
+        if stats_path:
+            app = LatencyStats(app, stats_path)
+            print(f"[p0_launch] retriever latency stats -> {stats_path}", flush=True)
         return original(app, *args, **kwargs)
 
     uvicorn.run = run

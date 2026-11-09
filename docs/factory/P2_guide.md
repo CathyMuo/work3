@@ -1,6 +1,6 @@
 # P2 厂内指导：出题奖励对比（Beta 平滑臂、NCP 臂）
 
-版本：tag `p2-r1`。协议（已冻结，不要改）：[research/protocols/P2_ncp_pilot.md](../../research/protocols/P2_ncp_pilot.md)。
+版本：tag `p2-r2`（2026-11-09，含反馈 #2 的修复；环境同 P0 指导第 3 节）。协议（已冻结，不要改）：[research/protocols/P2_ncp_pilot.md](../../research/protocols/P2_ncp_pilot.md)。
 
 **前提**：家服确认 **P0 = PASS 且 P1 = GO** 并通知开跑后才运行。没有通知不要跑。
 
@@ -13,7 +13,7 @@ Dr. Zero 臂直接复用 P0 的结果，不重跑。P2 只新跑两个臂，每�
 ## 1. 准备
 
 ```bash
-cd <工作目录>/work3 && git fetch --tags && git checkout p2-r1
+cd <工作目录>/work3 && git fetch --tags && git checkout p2-r2
 conda activate drzero
 # 与 P0 相同的变量：MODEL_3B、E5_MODEL、NGPU、端口……（不需要 TRAIN_PARQUET / TEST_PARQUET）
 export P0_DIR=<工作目录>/drzero               # P0 的 DRZERO_DIR
@@ -72,3 +72,7 @@ cd <工作目录>/work3 && git describe --tags --always
 ```
 
 失败时额外发失败阶段日志的最后 80 行。
+
+## 5. 看板
+
+启动看板时加上 `ARM_ROOT=$ARM_ROOT`，会同时显示两个臂（各自的训练进度、评测 EM、奖励曲线）、两个臂的题池 3 诊断，以及 `p2_summary.json` 的判定结果。

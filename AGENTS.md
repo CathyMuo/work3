@@ -14,6 +14,12 @@ their data are seen; gates are never changed after results.
 
 Target venue: ICML 2027 (primary), SIGIR 2027 (alternative); decide by 2026-12-15.
 
+## Board
+
+`bash scripts/run_board.sh` starts `python -m work3.board` (stdlib `http.server`,
+default 127.0.0.1:8766): research briefing from `research/` plus live progress read from
+`$DRZERO_DIR/work3_p0|work3_p1` and `$ARM_ROOT`. It must stay read-only.
+
 ## Collaboration (same as Work 2)
 
 - Develop, test (CPU) and commit on the development server (xd-5090); push to the public

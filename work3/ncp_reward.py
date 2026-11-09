@@ -175,7 +175,11 @@ def compute_challenger_score_batch_arm(data_sources, solution_strs, ground_truth
     def make_clients():
         return Clients(kwargs["base_url"], kwargs["model_name"], search_url, QUESTION_CONCURRENCY)
 
-    loop = asyncio.get_event_loop()
+    try:                       # upstream pattern; uvloop >= 0.22 no longer creates a loop here
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     results, calls = loop.run_until_complete(score_all(
         arm, [raw_qs[i] for i in valid], [raw_ans[i] for i in valid], renderer, make_clients,
         call_idx, DEFAULT_SOLVER_PREFIX))

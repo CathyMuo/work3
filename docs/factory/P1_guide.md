@@ -1,6 +1,6 @@
 # P1 厂内指导：噪声诊断（P0 跑完后运行）
 
-版本：tag `p1-r1`。协议（已冻结，不要改）：[research/protocols/P1_noise_diagnosis.md](../../research/protocols/P1_noise_diagnosis.md)，执行以末尾的 **Addendum 2026-11-06** 为准。
+版本：tag `p1-r2`（2026-11-09，含反馈 #2 的修复；环境同 P0 指导第 3 节）。协议（已冻结，不要改）：[research/protocols/P1_noise_diagnosis.md](../../research/protocols/P1_noise_diagnosis.md)，执行以末尾的 **Addendum 2026-11-06** 为准。
 
 **前提**：P0 全部跑完（包括 `gate`），且 `p0_summary.json` 已经发回家服。只要 P0 不是 INVALID 就可以跑 P1；P0 是否 PASS 由家服判断，P1 的产物照样有用。
 
@@ -11,7 +11,7 @@
 ## 1. 准备
 
 ```bash
-cd <工作目录>/work3 && git fetch --tags && git checkout p1-r1
+cd <工作目录>/work3 && git fetch --tags && git checkout p1-r2
 conda activate drzero
 # 与 P0 相同的变量：DRZERO_DIR、MODEL_3B、E5_MODEL、NGPU；端口默认 8100 / 8101
 P1=<工作目录>/work3/scripts/p1/run_p1.sh
@@ -58,3 +58,7 @@ cd <工作目录>/work3 && git describe --tags --always
 ```
 
 失败时额外发失败阶段日志的最后 80 行：`tail -n 80 logs/<阶段>.log`。
+
+## 5. 看板
+
+`bash scripts/run_board.sh`（同 P0 指导第 6 节）会自动显示 `work3_p1/` 的进度：两个题池各自的阶段状态、检索延迟和最新日志。

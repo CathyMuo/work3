@@ -122,3 +122,43 @@ Code:
 - `docs/factory/P2_guide.md`.
 
 Decision: `FREEZE_P2_RELEASE_P2_R1`.
+
+## 2026-11-09: Factory feedback #2 fixed (tags `p0-r2`, `p1-r2`, `p2-r2`)
+
+P0 started at the factory on 2026-11-09. The factory found five deterministic
+failures on the documented path; all were verified on the pinned code:
+
+- the retriever returns 500 without `return_scores`, so the readiness probe
+  never succeeded;
+- Hydra resolves a relative `--config-path` against `main_ppo.py`;
+- `sglang[all]` pulls compressed-tensors 0.15, which needs transformers ≥ 4.53;
+- uvloop 0.23 breaks verl's `get_event_loop()`;
+- a module-level typing alias in `p1_agent.py` fails on Python 3.9.
+
+Fixes:
+
+- probe sends `return_scores`;
+- absolute `CONFIG_PATH`;
+- pinned and checked environment;
+- a `get_event_loop` fallback in `ncp_reward.py`;
+- `typing` aliases (all modules import and all tests pass on 3.9).
+
+The factory's two local edits are merged.
+
+Throughput, in response to the user's request:
+
+- The proposer's in-trainer SGLang memory goes from 0.25 to 0.45. The reward
+  server stays at 0.25. Evaluation memory goes from 0.5 to 0.6.
+- The retriever wrapper records latency, so time spent waiting on search can
+  be measured.
+- The low-power rollout tail is latency-bound (sequential 5-turn
+  generate→search). It is documented as expected rather than "fixed".
+- The `undefined function` warnings are proposer sampling errors, not a schema
+  mismatch. They are left as is, because P0 must not change prompts.
+
+Added a read-only progress board, as Work 2 has: `work3/board.py` and
+`scripts/run_board.sh` (port 8766). It shows the research briefing from
+`research/` and live progress from run directories. P0 protocol addendum
+2026-11-09 records items that touch the setup. Gates are unchanged.
+
+Decision: `FACTORY_FEEDBACK_2_FIXES_R2`.

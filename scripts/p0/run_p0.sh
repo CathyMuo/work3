@@ -18,6 +18,8 @@
 #   GEN_MEM   (unset = upstream 0.8; memory fraction for data generation, only if it OOMs)
 #   ALLOW_BUSY_GPU (0; 1 = let `check` pass while other GPU processes are running)
 #   P0_REWARD_ARM (unset = upstream Dr. Zero reward; beta | ncp = P2 arm, set by scripts/p2/run_p2.sh)
+#   CHAL_ROLLOUT_MEM (0.45; proposer in-trainer SGLang memory fraction, upstream 0.25; memory only)
+#   EVAL_ROLLOUT_MEM (0.6; evaluation SGLang memory fraction; memory only)
 set -euo pipefail
 
 PIN=98c4a6dd2495e85d8b4d947ab4c030e540c922c5
@@ -32,6 +34,7 @@ OUT_ROOT="${OUT_ROOT:-$DRZERO_DIR/work3_p0}"
 E5_MODEL="${E5_MODEL:-intfloat/e5-base-v2}"
 RET_PORT="${RET_PORT:-8100}"
 REWARD_PORT="${REWARD_PORT:-8101}"
+CHAL_ROLLOUT_MEM="${CHAL_ROLLOUT_MEM:-0.45}"
 export DRZERO_DIR MODEL_3B
 MODEL_NAME="qwen2.5-3b-instruct"
 CKPT="checkpoints/dr-zero"
@@ -41,6 +44,7 @@ export WANDB_MODE="${WANDB_MODE:-offline}"
 ARM="${P0_REWARD_ARM:-}"
 case "$ARM" in ""|beta|ncp) ;; *) echo "P0_REWARD_ARM must be empty, beta or ncp"; exit 2 ;; esac
 [ -z "$ARM" ] || export WORK3_REWARD_LOG="$OUT_ROOT/reward_log.jsonl"
+export WORK3_RETRIEVER_STATS="$OUT_ROOT/logs/retriever_stats.json"   # written by work3.p0_launch serve
 
 mkdir -p "$OUT_ROOT/logs"
 cd "$DRZERO_DIR"
@@ -91,7 +95,7 @@ timed() {  # timed <name> <cmd...>: run tagged, tee log, record wall-clock secon
   ( export WORK3_P0_TAG="$TAG"; "$@" ) 2>&1 | tee "$OUT_ROOT/logs/$name.log"
   local rc=${PIPESTATUS[0]}
   set -e
-  echo "$name $(( $(date +%s) - t0 ))" >> "$OUT_ROOT/timings.txt"
+  echo "$name $(( $(date +%s) - t0 )) $rc $(date +%s)" >> "$OUT_ROOT/timings.txt"   # name seconds exit end
   cleanup_servers
   if [ "$rc" -ne 0 ]; then log "FAILED $name (exit $rc)"; exit "$rc"; fi
   log "done $name"
@@ -137,14 +141,38 @@ for mod, ver in want.items():
             bad.append(f"{mod} {v} != {ver}")
     except Exception as e:
         bad.append(f"{mod}: {e}")
-import pandas, tensordict, faiss, torch, verl
-print("pandas", pandas.__version__, "tensordict", tensordict.__version__, "faiss", faiss.__version__)
+import pandas, tensordict, faiss, torch, verl, numpy
+print("pandas", pandas.__version__, "tensordict", tensordict.__version__, "faiss", faiss.__version__,
+      "numpy", numpy.__version__)
 if int(pandas.__version__.split(".")[0]) >= 3:
     bad.append("pandas >= 3 breaks upstream main_generation (copy-on-write)")
+if int(numpy.__version__.split(".")[0]) >= 2:
+    bad.append(f"numpy {numpy.__version__} >= 2 (pin faiss-gpu-cu12==1.8.0.2 and numpy<2)")
 here = os.path.dirname(verl.__file__)
 if not here.startswith(os.environ["DRZERO_DIR"]):
     bad.append(f"verl imported from {here}, not from DRZERO_DIR (uninstall pip verl)")
-print("gpus", torch.cuda.device_count())
+print("gpus", torch.cuda.device_count(), "faiss gpus", faiss.get_num_gpus())
+# factory feedback #2: imports that failed on the documented install path
+try:
+    import compressed_tensors
+    print("compressed-tensors", getattr(compressed_tensors, "__version__", "?"))
+    from verl.custom_reward.reward_function import compute_challenger_format_scores  # noqa: F401
+except Exception as e:
+    bad.append(f"reward module import failed ({e!r}); pin compressed-tensors==0.10.2")
+try:
+    import flash_attn
+    from flash_attn.bert_padding import pad_input  # noqa: F401  (verl dp_actor imports it on CUDA)
+    print("flash-attn", flash_attn.__version__, "torch cxx11 abi", torch._C._GLIBCXX_USE_CXX11_ABI)
+except Exception as e:
+    bad.append(f"flash-attn import failed ({e!r}); install the wheel matching torch's cxx11 ABI")
+try:
+    import asyncio, uvloop
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())   # what sglang does on import
+    asyncio.set_event_loop(None)
+    asyncio.get_event_loop()                                   # what verl fsdp_sglang.py does
+    print("uvloop", uvloop.__version__, "get_event_loop ok")
+except Exception as e:
+    bad.append(f"uvloop get_event_loop failed ({e!r}); pin uvloop==0.21.0")
 if bad:
     print("PROBLEMS:", *bad, sep="\n  ")
     sys.exit(2)
@@ -201,7 +229,13 @@ stage_patch() {
         -e "s#--port=8001 \\\\\$#--port=$REWARD_PORT \\\\#"
         -e "s#base_url=\"http://127.0.0.1:8001\"#base_url=\"http://127.0.0.1:$REWARD_PORT\"#"
         -e "s#^    --topk 3 &\$#    --topk 3 \\&\\nbash $WORK3_DIR/scripts/p0/wait_retriever.sh $RET_PORT || exit 3#"
+        -e "s#^CONFIG_PATH=\"./config\"\$#CONFIG_PATH=\"$DRZERO_DIR/config\"#"
       )
+      # Hydra resolves a relative --config-path against verl/trainer/main_ppo.py, not the cwd
+      # (factory feedback #2, bug 3), hence the absolute CONFIG_PATH above.
+      if [ "$kind" = challenger ]; then
+        sedargs+=(-e "s#actor_rollout_ref.rollout.gpu_memory_utilization=\${rollout_memory_utilization} \\\\\$#actor_rollout_ref.rollout.gpu_memory_utilization=$CHAL_ROLLOUT_MEM \\\\#")
+      fi
       [ "$FAISS_GPU" = "1" ] || sedargs+=(-e "/^ *--faiss_gpu \\\\\$/d")
       [ -z "${GEN_MEM:-}" ] || sedargs+=(-e "s#^rollout_memory_utilization=0.8\$#rollout_memory_utilization=$GEN_MEM#")
       if [ -n "$ARM" ] && [ "$kind" = challenger ]; then
@@ -227,7 +261,11 @@ stage_patch() {
   fi
   local n_wait; n_wait=$(grep -l "wait_retriever.sh" "$PATCHED"/iter*.sh | wc -l)
   [ "$n_wait" = 9 ] || { log "patch FAILED: retriever wait inserted in $n_wait of 9 scripts"; exit 2; }
-  grep -n "^gpus=\|^dp=\|^model=\|conda activate\|faiss_gpu\|retriever_model\|^rollout_memory\|p0_launch\|wait_retriever\|TOOL_CONFIG=\|--port=\|base_url" "$PATCHED"/iter1_*.sh
+  local n_cfg; n_cfg=$(grep -l "^CONFIG_PATH=\"$DRZERO_DIR/config\"\$" "$PATCHED"/iter*.sh | wc -l)
+  [ "$n_cfg" = 9 ] || { log "patch FAILED: absolute CONFIG_PATH in $n_cfg of 9 scripts"; exit 2; }
+  local n_mem; n_mem=$(grep -l "rollout.gpu_memory_utilization=$CHAL_ROLLOUT_MEM " "$PATCHED"/iter*_challenger.sh | wc -l)
+  [ "$n_mem" = 3 ] || { log "patch FAILED: proposer rollout memory set in $n_mem of 3 scripts"; exit 2; }
+  grep -n "^gpus=\|^dp=\|^model=\|conda activate\|faiss_gpu\|retriever_model\|^rollout_memory\|gpu_memory_utilization\|mem-fraction\|p0_launch\|wait_retriever\|CONFIG_PATH=\|TOOL_CONFIG=\|--port=\|base_url" "$PATCHED"/iter1_*.sh
   log "patched scripts in $PATCHED"
 }
 
@@ -270,7 +308,7 @@ eval_model() {  # eval_model <t> <model_path>
   rm -rf "$out"; mkdir -p "$out"
   start_retriever || return 3
   python -m verl.trainer.main_ppo \
-    --config-path=./config --config-name=search_multiturn_grpo \
+    --config-path="$DRZERO_DIR/config" --config-name=search_multiturn_grpo \
     data.train_files=./data/test.parquet data.val_files=./data/test.parquet \
     data.train_batch_size=256 data.val_batch_size=256 data.max_prompt_length=512 \
     algorithm.adv_estimator=grpo \
@@ -282,7 +320,7 @@ eval_model() {  # eval_model <t> <model_path>
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.rollout.n=1 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
+    actor_rollout_ref.rollout.gpu_memory_utilization="${EVAL_ROLLOUT_MEM:-0.6}" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \

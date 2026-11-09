@@ -105,3 +105,41 @@ the factory node; none of them changes what is trained or how the gate is scored
    (max 30 min) or stops the stage. Upstream only `sleep 30`s, and the 61 GB
    index on NAS can take minutes to load. Searches sent before that would fail
    silently inside rollouts.
+
+## Addendum 2026-11-09 (factory feedback #2, during iteration 1)
+
+The decision rule, model, hyperparameters, step counts, data and evaluation set
+are unchanged. These items make the setup runnable, or change memory use only.
+
+1. **Retriever calls.** Upstream `retrieve_endpoint` always unpacks
+   `(results, scores)`, so any request without `"return_scores": true` returns
+   HTTP 500. verl's search tool always sends it; the readiness probe
+   (`wait_retriever.sh`) now does too. Every manual call to the service must
+   include it. The upstream file is not patched.
+2. **Hydra config path.** Hydra resolves a relative `--config-path` against
+   `verl/trainer/main_ppo.py`, not the working directory. `patch` now rewrites
+   `CONFIG_PATH` in all nine launch scripts to `$DRZERO_DIR/config`, and
+   evaluation uses the same absolute path. The config contents are unchanged.
+3. **Environment pins.** These are the versions the factory verified:
+   torch 2.6.0, sglang 0.4.6.post5, transformers 4.51.1,
+   compressed-tensors 0.10.2, uvloop 0.21.0, numpy 1.26.4,
+   faiss-gpu-cu12 1.8.0.2, flash-attn 2.7.4.post1 (ABI matching torch),
+   pandas 2.3.3, tensordict 0.9.1.
+   - compressed-tensors 0.15 imports a transformers module that does not
+     exist in 4.51.
+   - uvloop 0.23 breaks verl's `asyncio.get_event_loop()` in `fsdp_sglang.py`.
+   - `check` now verifies these imports and behaviours.
+4. **Memory fractions (throughput only).**
+   - The proposer's in-trainer SGLang rollout uses
+     `gpu_memory_utilization = CHAL_ROLLOUT_MEM`, default 0.45; upstream used
+     0.25, shared with the reward server.
+   - The proposer-reward SGLang server keeps 0.25.
+   - Evaluation uses `EVAL_ROLLOUT_MEM`, default 0.6 (previously 0.5).
+
+   These settings change KV-cache capacity and concurrency, not sampling. The
+   factory's first proposer stage ran at 0.25; later stages use the new
+   default. The stage timings record when the switch happened.
+5. **Bookkeeping.** `timings.txt` lines now carry the exit code and end time.
+   The retriever wrapper writes latency statistics to
+   `logs/retriever_stats.json` (read-only observability). The read-only board
+   (`scripts/run_board.sh`) displays both.

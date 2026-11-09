@@ -33,7 +33,7 @@ import json
 import re
 import string
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, List, Optional, Tuple
 
 MAX_TURNS = 5
 PROMPT_LEN = 512
@@ -180,8 +180,9 @@ def permute_results(results: list[list[str]], rng) -> tuple[list[list[str]], lis
 
 
 # ---------------------------------------------------------------- episode
-Generate = Callable[[str, int], Awaitable[tuple[str, str]]]          # (prompt, max_new) -> (text, finish)
-Search = Callable[[Any], Awaitable[tuple[str, list[list[str]] | None]]]  # (arguments) -> (content, passages)
+# typing aliases evaluated at import time: keep them valid on Python 3.9 (factory feedback #2)
+Generate = Callable[[str, int], Awaitable[Tuple[str, str]]]          # (prompt, max_new) -> (text, finish)
+Search = Callable[[Any], Awaitable[Tuple[str, Optional[List[List[str]]]]]]  # (arguments) -> (content, passages)
 
 
 @dataclass
