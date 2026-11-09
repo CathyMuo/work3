@@ -137,6 +137,157 @@ def reward_series(text: str) -> List[float]:
     return vals
 
 
+def _num(v: str) -> Optional[float]:
+    try:
+        x = float(v)
+    except ValueError:
+        return None
+    return x if x == x and abs(x) != float("inf") else None    # NaN / inf are not JSON
+
+
+def parse_step_items(body: str) -> Dict[str, float]:
+    """All numeric `key:value` items of one verl console metrics line."""
+    out = {}
+    for item in body.split(" - "):
+        k, sep, v = item.partition(":")
+        if sep and k and " " not in k.strip():
+            x = _num(v.strip())
+            if x is not None:
+                out[k.strip()] = x
+    return out
+
+
+class MetricsCache:
+    """Incremental parse of training logs: every verl `step:N - k:v - ...` line plus the
+    proposer reward prints. Re-reads only bytes appended since the previous call."""
+
+    CHUNK = 8 << 20
+
+    def __init__(self):
+        self.files: Dict[str, dict] = {}
+        self.lock = threading.Lock()
+
+    def get(self, path: Path) -> dict:
+        try:
+            st = path.stat()
+        except OSError:
+            return {"rows": [], "rewards": [], "keys": []}
+        key = str(path)
+        with self.lock:
+            e = self.files.get(key)
+            if e is None or st.st_size < e["offset"] or st.st_ino != e["ino"]:
+                e = {"offset": 0, "ino": st.st_ino, "rest": "", "steps": {}, "rewards": [], "keys": set()}
+                self.files[key] = e
+            if st.st_size > e["offset"]:
+                with path.open("rb") as f:
+                    f.seek(e["offset"])
+                    while True:
+                        data = f.read(self.CHUNK)
+                        if not data:
+                            break
+                        e["offset"] += len(data)
+                        text = e["rest"] + data.decode("utf-8", "replace")
+                        cut = max(text.rfind("\n"), text.rfind("\r"))
+                        e["rest"] = text[cut + 1:] if cut >= 0 else text
+                        self._consume(e, text[:cut + 1] if cut >= 0 else "")
+            rows = [dict(step=s, **v) for s, v in sorted(e["steps"].items())]
+            return {"rows": rows, "rewards": list(e["rewards"]), "keys": sorted(e["keys"])}
+
+    @staticmethod
+    def _consume(e: dict, text: str) -> None:
+        for line in re.split(r"[\r\n]+", text):
+            if "step:" in line:
+                m = STEP_LINE.search(line)
+                if m:
+                    items = parse_step_items(m.group(2))
+                    if items:
+                        e["steps"].setdefault(int(m.group(1)), {}).update(items)
+                        e["keys"].update(items)
+                    continue
+            m = FINAL_REWARD.search(line)
+            if m:
+                x = _num(m.group(1))
+                if x is not None:
+                    e["rewards"].append(x)
+                continue
+            m = ARM_REWARD.search(line)
+            if m:
+                x = _num(m.group(3))
+                if x is not None:
+                    e["rewards"].append(x)
+
+
+def reward_log_rows(path: Path) -> List[dict]:
+    """P2 arms: one row per proposer-reward call (work3/ncp_reward.py)."""
+    rows = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return rows
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        hist = r.get("k_hist") or {}
+        n_valid = sum(hist.values()) or None
+        row = {"call": r.get("call"), "mean_difficulty": r.get("mean_difficulty"),
+               "mean_final": r.get("mean_final"), "valid_share": (r.get("valid") or 0) / (r.get("batch") or 1),
+               "mean_w_mixed": r.get("mean_w_mixed"), "eta_mixed": r.get("eta_mixed"),
+               "seconds": r.get("seconds"),
+               "completion_tokens": (r.get("calls") or {}).get("completion_tokens")}
+        if n_valid:
+            for k, c in hist.items():
+                row[f"k={k} share"] = c / n_valid
+        rows.append(row)
+    return rows
+
+
+class History:
+    """In-memory ring buffers for GPU and retriever samples (nothing is written to disk)."""
+
+    def __init__(self, board: "Board", interval: float = 10.0, maxlen: int = 2160, gpu_fn=None):
+        import collections
+
+        self.board, self.interval = board, interval
+        self.gpu = collections.deque(maxlen=maxlen)
+        self.retriever: Dict[str, "collections.deque"] = collections.defaultdict(
+            lambda: collections.deque(maxlen=maxlen))
+        self.gpu_fn = gpu_fn or gpus
+        self.lock = threading.Lock()
+        self._last_ret: Dict[str, float] = {}
+
+    def sample_once(self, now: Optional[float] = None) -> None:
+        now = time.time() if now is None else now
+        g = self.gpu_fn()
+        with self.lock:
+            if g:
+                self.gpu.append({"t": now, "gpus": [{"util": x["util"], "power": x["power"],
+                                                     "mem": x["mem_used"]} for x in g]})
+            for run_id, _, run_dir, _, _ in self.board.specs:
+                s = load_json(run_dir / "logs" / "retriever_stats.json")
+                if s and s.get("updated") and s["updated"] != self._last_ret.get(run_id):
+                    self._last_ret[run_id] = s["updated"]
+                    self.retriever[run_id].append({"t": s["updated"], "p50": s.get("p50_ms"),
+                                                   "p95": s.get("p95_ms"), "rps": s.get("requests_per_second"),
+                                                   "in_flight": s.get("in_flight")})
+
+    def start(self) -> None:
+        def loop():
+            while True:
+                try:
+                    self.sample_once()
+                except Exception:  # noqa: BLE001 - sampling must never kill the board
+                    pass
+                time.sleep(self.interval)
+        threading.Thread(target=loop, daemon=True, name="board-history").start()
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            return {"gpu": list(self.gpu), "retriever": {k: list(v) for k, v in self.retriever.items()},
+                    "interval": self.interval}
+
+
 def scan_errors(text: str) -> dict:
     out = {k: len(p.findall(text)) for k, p in ERROR_PATTERNS.items()}
     names: Dict[str, int] = {}
@@ -365,6 +516,48 @@ class Board:
                 self.specs.append((f"p2-{arm}-p1", f"P2 {arm} 臂 · 题池 3 诊断", ar / arm / "work3_p1",
                                    P1_ARM_STAGES, "p1"))
         self.p2_summary = ar / "p2_summary.json" if ar else None
+        self.metrics_cache = MetricsCache()
+        self.history = History(self)
+
+    def _spec(self, run_id: str):
+        return next((s for s in self.specs if s[0] == run_id), None)
+
+    def metric_stages(self, run_id: str) -> Optional[dict]:
+        """Training / evaluation logs of a run that exist and carry metrics."""
+        spec = self._spec(run_id)
+        if not spec:
+            return None
+        names = [n for n, _, _ in spec[3] if ("challenger" in n or "solver" in n or n.startswith("eval"))
+                 and (spec[2] / "logs" / f"{n}.log").exists()]
+        labels = {n: lbl for n, lbl, _ in spec[3]}
+        return {"run": run_id, "stages": [{"name": n, "label": labels[n]} for n in names],
+                "reward_log": (spec[2] / "reward_log.jsonl").exists()}
+
+    def metrics(self, run_id: str, stage: str, compare: bool = False) -> Optional[dict]:
+        spec = self._spec(run_id)
+        if not spec or stage not in {n for n, _, _ in spec[3]}:      # only known stage names
+            return None
+        m = re.match(r"iter(\d)_(\w+)$", stage)
+        targets = [stage]
+        if compare and m:
+            targets = [f"iter{t}_{m.group(2)}" for t in (1, 2, 3)]
+        series = {}
+        for name in targets:
+            log = spec[2] / "logs" / f"{name}.log"
+            if not log.exists():
+                continue
+            data = self.metrics_cache.get(log)
+            mm = re.match(r"iter(\d)_challenger$", name)
+            base = 50 * (int(mm.group(1)) - 1) if mm else 0     # proposer steps continue across iterations
+            data["step_offset"] = base
+            series[name] = data
+        return {"run": run_id, "stage": stage, "compare": compare and bool(m), "series": series}
+
+    def reward_log(self, run_id: str) -> Optional[dict]:
+        spec = self._spec(run_id)
+        if not spec:
+            return None
+        return {"run": run_id, "rows": reward_log_rows(spec[2] / "reward_log.jsonl")}
 
     def state(self) -> dict:
         now = time.time()
@@ -429,6 +622,19 @@ def make_handler(board: Board):
                 elif url.path == "/api/log":
                     t = board.log_tail(q.get("run", [""])[0])
                     self.json(t) if t is not None else self.send(404, "unknown run", "text/plain; charset=utf-8")
+                elif url.path == "/api/stages":
+                    t = board.metric_stages(q.get("run", [""])[0])
+                    self.json(t) if t is not None else self.send(404, "unknown run", "text/plain; charset=utf-8")
+                elif url.path == "/api/metrics":
+                    t = board.metrics(q.get("run", [""])[0], q.get("stage", [""])[0],
+                                      q.get("compare", ["0"])[0] == "1")
+                    self.json(t) if t is not None else self.send(404, "unknown run or stage",
+                                                                 "text/plain; charset=utf-8")
+                elif url.path == "/api/rewardlog":
+                    t = board.reward_log(q.get("run", [""])[0])
+                    self.json(t) if t is not None else self.send(404, "unknown run", "text/plain; charset=utf-8")
+                elif url.path == "/api/history":
+                    self.json(board.history.snapshot())
                 else:
                     self.send(404, "not found", "text/plain; charset=utf-8")
             except Exception as e:  # noqa: BLE001 - keep the board alive
@@ -447,6 +653,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--arm-root", default=os.environ.get("ARM_ROOT"))
     a = p.parse_args(argv)
     board = Board(a.drzero_dir, a.arm_root)
+    board.history.start()
     server = ThreadingHTTPServer((a.host, a.port), make_handler(board))
     print(f"Work 3 board on http://{a.host}:{a.port}/  (runs: "
           + ", ".join(str(s[2]) for s in board.specs) + "); Ctrl-C to stop.", flush=True)

@@ -42,6 +42,7 @@ def make_run(root: Path) -> Path:
     (run / "logs" / "iter2_challenger.log").write_text(CHALLENGER_LOG)
     (run / "pool_check_iter1.json").write_text(json.dumps({"ok": True}))
     (run / "logs" / "retriever_stats.json").write_text(json.dumps({"p50_ms": 12.0, "window_seconds": 300,
+                                                                   "updated": now - 30, "p95_ms": 40.0,
                                                                    "requests_per_second": 3.0, "in_flight": 1,
                                                                    "errors_in_window": 0, "total_requests": 9}))
     ev = run / "eval" / "iter1"
@@ -129,6 +130,57 @@ class RunStatusTest(unittest.TestCase):
             self.assertEqual(st["stages"][0]["state"], "running")
 
 
+class MetricsTest(unittest.TestCase):
+    def test_incremental_parse_and_all_keys(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "x.log"
+            p.write_text("(TaskRunner pid=3) step:1 - critic/score/mean:0.1 - actor/entropy:nan - "
+                         "val-core/searchR1_nq/reward/mean@1:0.30 - name:abc\n\U0001F680 Final rewards: Avg 0.2, Max 1\n"
+                         "step:2 - critic/score/mean:0.")
+            c = B.MetricsCache()
+            first = c.get(p)
+            self.assertEqual([r["step"] for r in first["rows"]], [1])
+            self.assertNotIn("actor/entropy", first["rows"][0])          # NaN dropped
+            self.assertIn("val-core/searchR1_nq/reward/mean@1", first["keys"])
+            self.assertEqual(first["rewards"], [0.2])
+            with p.open("a") as f:                                         # finish the partial line
+                f.write("25 - timing_s/step:12\r\n")
+            second = c.get(p)
+            self.assertEqual(second["rows"][1], {"step": 2, "critic/score/mean": 0.25, "timing_s/step": 12.0})
+            p.write_text("step:9 - a/b:1\n")                               # truncated / rewritten file
+            self.assertEqual([r["step"] for r in c.get(p)["rows"]], [9])
+
+    def test_reward_log_rows(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "reward_log.jsonl"
+            p.write_text(json.dumps({"call": 1, "batch": 4, "valid": 2, "k_hist": {"0": 1, "1": 1},
+                                     "mean_difficulty": 0.5, "mean_w_mixed": 0.8, "calls": {"completion_tokens": 9},
+                                     "seconds": 3}) + "\nnot json\n")
+            rows = B.reward_log_rows(p)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual((rows[0]["valid_share"], rows[0]["k=1 share"], rows[0]["completion_tokens"]),
+                             (0.5, 0.5, 9))
+
+    def test_board_metrics_compare_and_history(self):
+        with tempfile.TemporaryDirectory() as d:
+            run = make_run(Path(d))
+            (run / "logs" / "iter1_challenger.log").write_text(
+                "step:1 - critic/score/mean:0.1\nstep:2 - critic/score/mean:0.2\n")
+            board = B.Board(drzero_dir=d, arm_root=str(Path(d) / "none"))
+            st = board.metric_stages("p0")
+            self.assertEqual([s["name"] for s in st["stages"]][:2], ["iter1_challenger", "iter1_solver"])
+            m = board.metrics("p0", "iter2_challenger", compare=True)
+            self.assertTrue(m["compare"])
+            self.assertEqual(set(m["series"]), {"iter1_challenger", "iter2_challenger"})
+            self.assertEqual(m["series"]["iter2_challenger"]["step_offset"], 50)
+            self.assertIsNone(board.metrics("p0", "../../etc/passwd"))
+            h = B.History(board, gpu_fn=lambda: [{"util": 50.0, "power": 300.0, "mem_used": 1024.0}])
+            h.sample_once(now=100.0); h.sample_once(now=110.0)
+            snap = h.snapshot()
+            self.assertEqual(len(snap["gpu"]), 2)
+            self.assertEqual(len(snap["retriever"]["p0"]), 1)          # same stats file sampled once
+
+
 class ServerTest(unittest.TestCase):
     def test_http_endpoints(self):
         with tempfile.TemporaryDirectory() as d:
@@ -148,6 +200,13 @@ class ServerTest(unittest.TestCase):
                 self.assertEqual(log["file"], "iter2_challenger.log")
                 res = json.loads(urllib.request.urlopen(base + "/api/research").read())
                 self.assertIn("plan_html", res)
+                m = json.loads(urllib.request.urlopen(base + "/api/metrics?run=p0&stage=iter2_challenger").read())
+                self.assertEqual([r["step"] for r in m["series"]["iter2_challenger"]["rows"]], [51, 52])
+                self.assertIn("stages", json.loads(urllib.request.urlopen(base + "/api/stages?run=p0").read()))
+                self.assertIn("gpu", json.loads(urllib.request.urlopen(base + "/api/history").read()))
+                self.assertEqual(json.loads(urllib.request.urlopen(base + "/api/rewardlog?run=p0").read())["rows"], [])
+                with self.assertRaises(urllib.error.HTTPError):
+                    urllib.request.urlopen(base + "/api/metrics?run=p0&stage=nope")
                 with self.assertRaises(urllib.error.HTTPError):
                     urllib.request.urlopen(base + "/api/log?run=nope")
             finally:

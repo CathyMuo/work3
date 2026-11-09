@@ -162,3 +162,23 @@ Added a read-only progress board, as Work 2 has: `work3/board.py` and
 2026-11-09 records items that touch the setup. Gates are unchanged.
 
 Decision: `FACTORY_FEEDBACK_2_FIXES_R2`.
+
+## 2026-11-09: Board training curves (tags `p0-r3`, `p1-r3`, `p2-r3`)
+
+The user asked for the board to show training curves and other metrics. Added a
+"训练曲线" view to the read-only board:
+
+- every numeric metric from verl's per-step console lines, parsed
+  incrementally and cached, grouped and selectable;
+- presets for common metrics, validation EM, and timing / throughput;
+- three-iteration overlay, with the step axis reset within each iteration;
+- smoothing and hover values;
+- the proposer reward series;
+- P2 reward-log curves: difficulty, w, η, k distribution, tokens and seconds;
+- in-memory 10-second history of GPU power, utilisation and memory, and of
+  retriever latency and request rate.
+
+Run scripts are byte-identical to the r2 tags, so switching tags mid-run is
+safe. No gate, protocol or experiment setting changed.
+
+Decision: `BOARD_TRAINING_CURVES_R3`.

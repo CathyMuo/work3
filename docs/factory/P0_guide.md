@@ -1,6 +1,6 @@
 # P0 厂内指导：复现 Dr. Zero Qwen2.5-3B（4×H800）
 
-版本：tag `p0-r2`（2026-11-09，处理厂内反馈 #2）。
+版本：tag `p0-r3`（2026-11-09：处理厂内反馈 #2，看板加训练曲线；p0-r3 与 p0-r2 的运行脚本完全相同）。
 协议（已冻结，不要改）：[research/protocols/P0_drzero_reproduction.md](../../research/protocols/P0_drzero_reproduction.md)，执行以末尾两节 **Addendum** 为准。
 判定：第 3 轮 7 个数据集平均 EM ≥ **0.306** 为 PASS（论文 0.326）。
 
@@ -8,14 +8,14 @@
 
 ---
 
-## 0. 正在用 p0-r1 跑的话：怎样切到 p0-r2
+## 0. 正在用 p0-r1 跑的话：怎样切到 p0-r3
 
 **不要在 `run_p0.sh` 运行时切换代码**：bash 是边执行边读脚本的，中途改文件会让正在跑的进程出错。等当前这一步（比如 `bash $P0 iter1`）整步结束后再切：
 
 ```bash
 cd <工作目录>/work3
 git checkout -- scripts/p0/wait_retriever.sh scripts/p0/run_p0.sh   # 丢掉两处临时修改（p0-r2 已合入）
-git fetch --tags && git checkout p0-r2
+git fetch --tags && git checkout p0-r3
 bash $P0 patch      # 重新生成补丁脚本；不要重跑 prepare
 ```
 
@@ -29,7 +29,7 @@ bash $P0 patch      # 重新生成补丁脚本；不要重跑 prepare
 
 ```bash
 cd <工作目录>
-git clone https://github.com/CathyMuo/work3.git && cd work3 && git checkout p0-r2 && cd ..
+git clone https://github.com/CathyMuo/work3.git && cd work3 && git checkout p0-r3 && cd ..
 git clone https://github.com/facebookresearch/drzero.git
 cd drzero && git checkout 98c4a6dd2495e85d8b4d947ab4c030e540c922c5 && cd ..
 ```
@@ -125,7 +125,16 @@ DRZERO_DIR=<工作目录>/drzero BOARD_PYTHON=$(which python) bash <工作目录
   - 检索服务延迟（p50 / p95、每秒请求数、进行中的请求数）；
   - 每张卡的功率、显存和利用率；
   - 告警，以及最新日志。
+- **训练曲线**：
+  - 可以选任意运行、任意训练或评测阶段。verl 每一步打印的全部数值指标（`critic/`、`actor/`、`response_length/`、`num_turns/`、`timing_s/`、`perf/`、训练中的验证 EM `val-core/…` 等）按组列出，点选即可画图；所选指标会记住。
+  - 提供“常用指标 / 验证 EM / 耗时·吞吐”三个一键组合。
+  - 可以叠加三轮对比，横轴换成本轮内步数；也可以做平滑。
+  - 鼠标悬停显示每一步的数值；出题者奖励单独成图。
+  - P2 各臂另有出题奖励日志的曲线：平均难度分、信号占比 w、噪声占比 η、k 分布、每步生成 token 和耗时。
+  - GPU 功率、利用率、显存，以及检索延迟和请求数的历史曲线：看板启动后每 10 秒采样一次，只存在内存里，保留 6 小时。
 - **研究说明**：STATE、实验计划、冻结的门槛和决策记录，都直接从仓库读取。
+
+看板只读日志、不碰训练，**正在跑实验时也可以随时更新看板版本**：从 `p0-r2` 切到 `p0-r3` 时，运行脚本没有任何改动，git 不会动到正在执行的文件。
 
 **各阶段的正常表现**（用于判断，不是硬性指标）：
 

@@ -3,8 +3,8 @@
   "project": "work3",
   "updated_at": "2026-11-09",
   "current_stage": "P0",
-  "status": "P0 running at the factory (iteration 1, started 2026-11-09 with p0-r1 plus two local fixes). Feedback #2 fixed in p0-r2 / p1-r2 / p2-r2 (same commit): retriever probe, absolute Hydra config path, pinned environment, proposer rollout memory 0.45, Python 3.9 import fix, read-only board.",
-  "next_action": "Factory: after the current stage ends, switch to p0-r2 (docs/factory/P0_guide.md section 0), re-run patch, continue P0; keep the board open. Home: review returned summaries.",
+  "status": "P0 running at the factory (iteration 1, started 2026-11-09 with p0-r1 plus two local fixes). Feedback #2 fixed in p0-r2 / p1-r2 / p2-r2, then r3 (board training curves; run scripts identical): retriever probe, absolute Hydra config path, pinned environment, proposer rollout memory 0.45, Python 3.9 import fix, read-only board.",
+  "next_action": "Factory: after the current stage ends, switch to p0-r3 (docs/factory/P0_guide.md section 0), re-run patch, continue P0; keep the board open. Home: review returned summaries.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -29,7 +29,7 @@
   "upstreams": {
     "drzero": "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
   },
-  "p0_release": "p0-r2",
-  "p1_release": "p1-r2",
-  "p2_release": "p2-r2"
+  "p0_release": "p0-r3",
+  "p1_release": "p1-r3",
+  "p2_release": "p2-r3"
 }

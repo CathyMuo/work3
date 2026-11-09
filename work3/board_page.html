@@ -35,16 +35,46 @@ details { border-top:1px solid var(--line); padding:6px 0; } summary { cursor:po
 .big { font-size:22px; font-weight:650; }
 svg { width:100%; height:140px; }
 .lnk { text-decoration:underline dotted; }
+.ctl { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; }
+.ctl select, .ctl button { border:1px solid var(--line); background:var(--card); color:var(--ink); padding:4px 8px; border-radius:6px; }
+.chips { display:flex; flex-wrap:wrap; gap:5px; margin:6px 0; }
+.chip { border:1px solid var(--line); border-radius:999px; padding:1px 9px; font-size:12px; cursor:pointer; background:var(--card); color:var(--ink); }
+.chip.on { border-color:var(--run); color:var(--run); background:rgba(37,99,235,.08); }
+.charts { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(420px,100%),1fr)); gap:12px; }
+.chart { position:relative; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 10px 6px; }
+.chart h3 { font-size:13px; margin:0 0 2px; font-weight:600; word-break:break-all; }
+.chart svg { height:200px; display:block; }
+.chart .legend { font-size:11.5px; color:var(--mute); display:flex; flex-wrap:wrap; gap:4px 12px; }
+.chart .legend i { display:inline-block; width:10px; height:3px; margin-right:4px; vertical-align:middle; }
+.tip { position:absolute; pointer-events:none; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px 7px; font-size:11.5px; box-shadow:0 2px 8px rgba(0,0,0,.12); white-space:nowrap; z-index:2; }
+.axis { fill:var(--mute); font-size:10px; }
+.gridl { stroke:var(--line); stroke-width:1; }
 </style>
 </head>
 <body>
 <header>
   <h1>Work 3 · 零数据自博弈搜索智能体</h1>
-  <nav><button id="t-live" class="on">实验进度</button> <button id="t-res">研究说明</button></nav>
+  <nav><button id="t-live" class="on">实验进度</button> <button id="t-cur">训练曲线</button> <button id="t-res">研究说明</button></nav>
   <span class="mute" id="upd"></span>
 </header>
 <main>
   <section id="live"></section>
+  <section id="cur" hidden>
+    <div class="card">
+      <div class="ctl">
+        <label>运行 <select id="c-run"></select></label>
+        <label>阶段 <select id="c-stage"></select></label>
+        <label><input type="checkbox" id="c-cmp"> 叠加三轮对比</label>
+        <label>平滑 <select id="c-smooth"><option value="0">无</option><option value="0.6">0.6</option><option value="0.8">0.8</option><option value="0.9">0.9</option></select></label>
+        <button id="c-def">常用指标</button> <button id="c-val">验证 EM</button> <button id="c-time">耗时 / 吞吐</button> <button id="c-none">清空</button>
+        <span class="mute" id="c-info"></span>
+      </div>
+      <div id="c-groups"></div>
+    </div>
+    <div class="charts" id="c-charts"></div>
+    <div class="card" id="c-reward" hidden><h2>P2 出题奖励日志（每步一次）</h2><div class="charts" id="c-reward-charts"></div></div>
+    <div class="card"><h2>GPU 与检索服务历史（看板启动后每 10 秒采样，保留 6 小时）</h2><div class="charts" id="c-hist"></div></div>
+  </section>
   <section id="res" hidden></section>
 </main>
 <script>
@@ -154,9 +184,187 @@ async function loadResearch() {
     r.decisions.map(d => `<details><summary>${esc(d.title)}</summary>${d.html}</details>`).join("") + `</div>`;
 }
 
-$("#t-live").onclick = () => { $("#live").hidden = false; $("#res").hidden = true; $("#t-live").classList.add("on"); $("#t-res").classList.remove("on"); };
-$("#t-res").onclick = () => { $("#live").hidden = true; $("#res").hidden = false; $("#t-res").classList.add("on"); $("#t-live").classList.remove("on"); loadResearch(); };
+// ------------------------------------------------------------------ training curves
+const PALETTE = ["#2563eb", "#d97706", "#16a34a", "#dc2626", "#7c3aed", "#0891b2", "#db2777", "#65a30d"];
+const DEFAULT_KEYS = ["critic/score/mean", "critic/rewards/mean", "response_length/mean", "actor/entropy", "actor/pg_loss",
+  "actor/grad_norm", "actor/pg_clipfrac", "actor/ppo_kl", "num_turns/mean", "timing_s/step"];
+const CHARTS = {};
+let cur = {run: null, stage: null, data: null, keys: new Set(), loaded: false};
+const store = { get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (e) { return d; } },
+                set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
+
+function niceTicks(lo, hi, n = 4) {
+  if (!(isFinite(lo) && isFinite(hi))) return [];
+  if (lo === hi) { lo -= Math.abs(lo) * 0.1 || 1; hi += Math.abs(hi) * 0.1 || 1; }
+  const raw = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(raw))), step = [1, 2, 2.5, 5, 10].map(s => s * mag).find(s => raw <= s);
+  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toPrecision(12));
+  return out;
+}
+const fmt = v => v == null ? "—" : v === 0 ? "0" : (Math.abs(v) >= 1000 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(2) : Math.abs(v) >= 0.01 ? v.toFixed(4) : v.toExponential(2));
+function ema(ys, a) { if (!a) return ys; let p = null; return ys.map(y => y == null ? null : (p = p == null ? y : a * p + (1 - a) * y)); }
+
+function lineChart(id, title, series, opt = {}) {
+  // series: [{name, xs, ys}]; returns HTML; data kept in CHARTS[id] for hover
+  const W = 640, H = 200, L = 52, R = 10, T = 8, B = 24;
+  const all = series.flatMap(s => s.xs.map((x, i) => [x, s.ys[i]])).filter(p => p[1] != null && isFinite(p[1]));
+  if (all.length < 1) return `<div class="chart"><h3>${esc(title)}</h3><p class="mute">暂无数据</p></div>`;
+  const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
+  let x0 = Math.min(...xs), x1 = Math.max(...xs); if (x0 === x1) { x0 -= 1; x1 += 1; }
+  const yt = niceTicks(Math.min(...ys), Math.max(...ys)); const y0 = Math.min(yt[0], ...ys), y1 = Math.max(yt[yt.length - 1], ...ys);
+  const sx = x => L + (x - x0) / (x1 - x0) * (W - L - R), sy = y => T + (1 - (y - y0) / ((y1 - y0) || 1)) * (H - T - B);
+  const xt = niceTicks(x0, x1, 5);
+  let g = yt.map(v => `<line class="gridl" x1="${L}" x2="${W - R}" y1="${sy(v)}" y2="${sy(v)}"/><text class="axis" x="${L - 4}" y="${sy(v) + 3}" text-anchor="end">${esc(fmt(v))}</text>`).join("");
+  g += xt.map(v => `<text class="axis" x="${sx(v)}" y="${H - 6}" text-anchor="middle">${esc(opt.xfmt ? opt.xfmt(v) : v)}</text>`).join("");
+  const lines = series.map((s, k) => {
+    let d = "", pen = false;
+    s.xs.forEach((x, i) => { const y = s.ys[i]; if (y == null || !isFinite(y)) { pen = false; return; }
+      d += (pen ? "L" : "M") + sx(x).toFixed(1) + "," + sy(y).toFixed(1); pen = true; });
+    const dots = s.xs.length <= 60 ? s.xs.map((x, i) => s.ys[i] == null ? "" : `<circle cx="${sx(x).toFixed(1)}" cy="${sy(s.ys[i]).toFixed(1)}" r="2" fill="${PALETTE[k % 8]}"/>`).join("") : "";
+    return `<path d="${d}" fill="none" stroke="${PALETTE[k % 8]}" stroke-width="1.8"/>` + dots;
+  }).join("");
+  const ref = opt.ref != null && opt.ref >= y0 && opt.ref <= y1 ? `<line x1="${L}" x2="${W - R}" y1="${sy(opt.ref)}" y2="${sy(opt.ref)}" stroke="var(--bad)" stroke-dasharray="4 3"/>` : "";
+  CHARTS[id] = {series, sx, x0, x1, L, R, W, xfmt: opt.xfmt, xlabel: opt.xlabel || "步"};
+  const legend = series.length > 1 || opt.legend ? `<div class="legend">` + series.map((s, k) => `<span><i style="background:${PALETTE[k % 8]}"></i>${esc(s.name)}</span>`).join("") + `</div>` : "";
+  const last = series.map(s => { for (let i = s.ys.length - 1; i >= 0; i--) if (s.ys[i] != null) return s.ys[i]; return null; });
+  return `<div class="chart" data-chart="${id}"><h3>${esc(title)} <span class="mute">最新 ${last.map(fmt).join(" / ")}</span></h3>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}${ref}${lines}<line class="hover" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--mute)" stroke-dasharray="2 2" visibility="hidden"/></svg>${legend}</div>`;
+}
+
+document.addEventListener("mousemove", ev => {
+  const box = ev.target.closest && ev.target.closest(".chart[data-chart]");
+  document.querySelectorAll(".tip").forEach(t => { if (!box || t.parentNode !== box) t.remove(); });
+  document.querySelectorAll(".chart svg .hover").forEach(l => { if (!box || !box.contains(l)) l.setAttribute("visibility", "hidden"); });
+  if (!box) return;
+  const c = CHARTS[box.dataset.chart]; if (!c) return;
+  const svg = box.querySelector("svg"), r = svg.getBoundingClientRect();
+  const px = (ev.clientX - r.left) / r.width * c.W; if (px < c.L || px > c.W - c.R) return;
+  const xv = c.x0 + (px - c.L) / (c.W - c.L - c.R) * (c.x1 - c.x0);
+  let best = null;
+  c.series.forEach(s => s.xs.forEach(x => { if (best == null || Math.abs(x - xv) < Math.abs(best - xv)) best = x; }));
+  const rows = c.series.map((s, k) => { const i = s.xs.indexOf(best); return i < 0 || s.ys[i] == null ? "" : `<div><span style="color:${PALETTE[k % 8]}">■</span> ${esc(s.name)}：${fmt(s.ys[i])}</div>`; }).join("");
+  const line = svg.querySelector(".hover"); line.setAttribute("x1", c.sx(best)); line.setAttribute("x2", c.sx(best)); line.setAttribute("visibility", "visible");
+  let tip = box.querySelector(".tip"); if (!tip) { tip = document.createElement("div"); tip.className = "tip"; box.appendChild(tip); }
+  tip.innerHTML = `<b>${esc(c.xlabel)} ${esc(c.xfmt ? c.xfmt(best) : best)}</b>${rows}`;
+  const bx = box.getBoundingClientRect(); let left = ev.clientX - bx.left + 12; if (left > bx.width - 200) left = ev.clientX - bx.left - 200;
+  tip.style.left = left + "px"; tip.style.top = (ev.clientY - bx.top + 10) + "px";
+});
+
+async function curInit() {
+  const s = await (await fetch("/api/state")).json();
+  const runs = s.runs.filter(r => r.exists);
+  $("#c-run").innerHTML = runs.map(r => `<option value="${esc(r.id)}">${esc(r.title)}</option>`).join("") || `<option value="">（没有运行目录）</option>`;
+  if (cur.run && runs.some(r => r.id === cur.run)) $("#c-run").value = cur.run;
+  cur.run = $("#c-run").value; cur.loaded = true;
+  await curStages();
+}
+
+async function curStages() {
+  if (!cur.run) return;
+  const st = await (await fetch("/api/stages?run=" + encodeURIComponent(cur.run))).json();
+  const opts = st.stages.map(x => `<option value="${esc(x.name)}">${esc(x.label)}</option>`).join("");
+  $("#c-stage").innerHTML = opts || `<option value="">（还没有训练日志）</option>`;
+  const running = [...st.stages].reverse().find(x => /challenger|solver/.test(x.name));
+  if (cur.stage && st.stages.some(x => x.name === cur.stage)) $("#c-stage").value = cur.stage;
+  else if (running) $("#c-stage").value = running.name;
+  cur.stage = $("#c-stage").value;
+  $("#c-reward").hidden = !st.reward_log;
+  await curLoad();
+}
+
+function stageType(stage) { return (stage || "").replace(/^iter\d_/, "").replace(/\d$/, ""); }
+
+async function curLoad() {
+  if (!cur.run || !cur.stage) { $("#c-charts").innerHTML = ""; return; }
+  const cmp = $("#c-cmp").checked ? 1 : 0;
+  const d = await (await fetch(`/api/metrics?run=${encodeURIComponent(cur.run)}&stage=${encodeURIComponent(cur.stage)}&compare=${cmp}`)).json();
+  cur.data = d;
+  const keys = new Set(); Object.values(d.series).forEach(s => s.keys.forEach(k => keys.add(k)));
+  const saved = store.get("w3keys:" + stageType(cur.stage), null);
+  cur.keys = new Set((saved || DEFAULT_KEYS.concat([...keys].filter(k => /^val-core\/.*mean@1$/.test(k)))).filter(k => keys.has(k)));
+  renderGroups([...keys].sort());
+  renderCharts();
+  if (!$("#c-reward").hidden) loadRewardLog();
+}
+
+function renderGroups(keys) {
+  const groups = {};
+  keys.forEach(k => { const g = k.includes("/") ? k.split("/")[0] : "其他"; (groups[g] = groups[g] || []).push(k); });
+  $("#c-groups").innerHTML = Object.entries(groups).map(([g, ks]) => `<details ${ks.some(k => cur.keys.has(k)) ? "open" : ""}><summary>${esc(g)}（${ks.length}）</summary><div class="chips">` +
+    ks.map(k => `<span class="chip ${cur.keys.has(k) ? "on" : ""}" data-key="${esc(k)}">${esc(k.slice(g.length + 1) || k)}</span>`).join("") + `</div></details>`).join("")
+    || `<p class="mute">这个日志里还没有 step 指标（verl 每步结束才打印一行）。</p>`;
+  $("#c-groups").querySelectorAll(".chip").forEach(ch => ch.onclick = () => {
+    const k = ch.dataset.key; cur.keys.has(k) ? cur.keys.delete(k) : cur.keys.add(k);
+    ch.classList.toggle("on"); store.set("w3keys:" + stageType(cur.stage), [...cur.keys]); renderCharts();
+  });
+}
+
+function renderCharts() {
+  const d = cur.data; if (!d) return;
+  const a = +$("#c-smooth").value, names = Object.keys(d.series);
+  const label = n => d.compare ? n.replace(/_.*/, "").replace("iter", "第") + "轮" : "";
+  let html = "";
+  const rw = names.filter(n => d.series[n].rewards.length);
+  if (rw.length) html += lineChart("rw", "出题者奖励（每步 Final rewards Avg）", rw.map(n => ({name: label(n) || "奖励", xs: d.series[n].rewards.map((_, i) => i + 1), ys: ema(d.series[n].rewards, a)})));
+  for (const k of [...cur.keys]) {
+    const ser = names.map(n => { const s = d.series[n], rows = s.rows.filter(r => r[k] != null);
+      return {name: label(n) || k, xs: rows.map(r => r.step - (d.compare ? s.step_offset : 0)), ys: ema(rows.map(r => r[k]), a)}; }).filter(s => s.xs.length);
+    html += lineChart("m-" + k, k, ser, {legend: d.compare});
+  }
+  const n = names.reduce((m, x) => Math.max(m, d.series[x].rows.length), 0);
+  $("#c-info").textContent = `${n} 个 step、${cur.keys.size} 项指标已选${d.compare ? "；横轴为本轮内步数" : ""}`;
+  $("#c-charts").innerHTML = html || `<div class="card mute">请在上方选择指标。</div>`;
+}
+
+async function loadRewardLog() {
+  const d = await (await fetch("/api/rewardlog?run=" + encodeURIComponent(cur.run))).json();
+  const rows = d.rows || [], a = +$("#c-smooth").value, xs = rows.map(r => r.call);
+  const one = (key, title) => lineChart("rl-" + key, title, [{name: key, xs, ys: ema(rows.map(r => r[key] ?? null), a)}]);
+  const kk = Object.keys(rows[rows.length - 1] || {}).filter(k => /^k=\d+ share$/.test(k));
+  $("#c-reward-charts").innerHTML = one("mean_difficulty", "平均难度分") + one("mean_final", "平均最终奖励") +
+    one("mean_w_mixed", "NCP 信号占比 w（0<k<n 的题）") + one("eta_mixed", "噪声占比 η（0<k<n 的题）") +
+    lineChart("rl-k", "解题成功次数 k 的分布", kk.map(k => ({name: k.replace(" share", ""), xs, ys: rows.map(r => r[k] ?? null)})), {legend: true}) +
+    one("completion_tokens", "每步生成 token（出题奖励）") + one("seconds", "每步出题奖励耗时（秒）");
+}
+
+async function loadHistory() {
+  const h = await (await fetch("/api/history")).json();
+  const now = Date.now() / 1000, xm = t => (t - now) / 60, xfmt = v => (v >= -0.5 ? "现在" : Math.round(v) + " 分");
+  const g = h.gpu || [], n = g.length ? g[g.length - 1].gpus.length : 0;
+  const per = (field, f = v => v) => [...Array(n).keys()].map(i => ({name: "GPU " + i, xs: g.map(s => xm(s.t)), ys: g.map(s => s.gpus[i] ? f(s.gpus[i][field]) : null)}));
+  let html = lineChart("h-power", "功率（W）", per("power"), {xfmt, xlabel: "时间", legend: true}) +
+             lineChart("h-util", "GPU 利用率（%）", per("util"), {xfmt, xlabel: "时间", legend: true}) +
+             lineChart("h-mem", "显存（GB）", per("mem", v => v == null ? null : v / 1024), {xfmt, xlabel: "时间", legend: true});
+  for (const [run, rs] of Object.entries(h.retriever || {})) {
+    html += lineChart("h-ret-" + run, `检索延迟（ms）· ${run}`, [{name: "p50", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.p50)}, {name: "p95", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.p95)}], {xfmt, xlabel: "时间", legend: true}) +
+            lineChart("h-rps-" + run, `检索请求（次/秒）与进行中请求数 · ${run}`, [{name: "次/秒", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.rps)}, {name: "进行中", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.in_flight)}], {xfmt, xlabel: "时间", legend: true});
+  }
+  $("#c-hist").innerHTML = html;
+}
+
+function setKeys(pred) {
+  const keys = new Set(); Object.values((cur.data || {}).series || {}).forEach(s => s.keys.forEach(k => keys.add(k)));
+  cur.keys = new Set([...keys].filter(pred)); store.set("w3keys:" + stageType(cur.stage), [...cur.keys]);
+  renderGroups([...keys].sort()); renderCharts();
+}
+$("#c-run").onchange = () => { cur.run = $("#c-run").value; cur.stage = null; curStages(); };
+$("#c-stage").onchange = () => { cur.stage = $("#c-stage").value; curLoad(); };
+$("#c-cmp").onchange = curLoad;
+$("#c-smooth").onchange = () => { renderCharts(); if (!$("#c-reward").hidden) loadRewardLog(); };
+$("#c-def").onclick = () => setKeys(k => DEFAULT_KEYS.includes(k) || /^val-core\/.*mean@1$/.test(k));
+$("#c-val").onclick = () => setKeys(k => /^val-(core|aux)\/.*(reward|acc)\/mean@1$/.test(k));
+$("#c-time").onclick = () => setKeys(k => /^(timing_s|perf)\//.test(k));
+$("#c-none").onclick = () => setKeys(() => false);
+
+function show(which) {
+  for (const w of ["live", "cur", "res"]) { $("#" + w).hidden = w !== which; $("#t-" + w).classList.toggle("on", w === which); }
+  if (which === "res") loadResearch();
+  if (which === "cur") { (cur.loaded ? curLoad() : curInit()); loadHistory(); }
+}
+$("#t-live").onclick = () => show("live");
+$("#t-cur").onclick = () => show("cur");
+$("#t-res").onclick = () => show("res");
 tick(); setInterval(tick, 8000);
+setInterval(() => { if (!$("#cur").hidden) { curLoad(); loadHistory(); } }, 15000);
 </script>
 </body>
 </html>
