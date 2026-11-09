@@ -216,3 +216,38 @@ The previous file dump is now 项目记录.
 Run scripts are unchanged since r2, so switching tags is safe while P0 runs.
 
 Decision: `BOARD_REDESIGN_R4`.
+
+## 2026-11-09: Speed analysis after factory feedback #3 (tags `p0-r5`, `p1-r5`, `p2-r5`)
+
+Factory timing: a proposer step takes about 452 s, of which about 429 s (94%)
+is the proposer-reward rollout (5 multi-turn solver attempts per question on
+the separate reward SGLang server); the update takes about 23 s. Raising the
+in-trainer rollout memory (r2) gave no measurable gain, because that is not
+the engine doing the reward rollout. Batch sizes are not worth changing, and
+GPU 0 is full at the training peak. HRPO's hop grouping works as designed: it
+standardises rewards within `data_source` hop groups, but it is an advantage
+computation, not a rollout scheduler.
+
+The factory saw GPUs 2 and 3 idle. That contradicts SGLang 0.4.6.post5's DP
+controller, which places DP1 on GPUs 2–3 and round-robins requests, so it is
+not acted on blindly.
+
+Changes:
+
+- in-trainer rollout TP 2 → 1 (four engines; mainly speeds up solver stages
+  and evaluation);
+- reward server layout made explicit (`REWARD_TP` / `REWARD_DP`, upstream
+  default kept) and started with `--enable-metrics`;
+- read-only `run_p0.sh probe` (process-to-GPU map, reward-server layout and KV
+  capacity, queueing, retriever latency, with a verdict);
+- the board shows reward-server load and bases the remaining-time estimate on
+  the latest five step times;
+- atomic `patch`, so the factory can apply r5 without stopping the running
+  stage.
+
+The reward-server layout will be decided from the probe output: DP not used →
+tp 1 × dp 4; KV-bound → revisit memory; latency-bound tail → accept.
+
+Recorded in P0 addendum 2026-11-09 (b).
+
+Decision: `SPEED_R5_TP1_AND_PROBE`.

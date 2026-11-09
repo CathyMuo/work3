@@ -143,3 +143,29 @@ are unchanged. These items make the setup runnable, or change memory use only.
    The retriever wrapper writes latency statistics to
    `logs/retriever_stats.json` (read-only observability). The read-only board
    (`scripts/run_board.sh`) displays both.
+
+## Addendum 2026-11-09 (b) (factory feedback #3, iteration-1 proposer at step 16)
+
+The decision rule, model, hyperparameters, step counts, data and evaluation are
+unchanged. These items change only parallel layout and observability:
+
+1. **In-trainer rollout tensor parallelism.** `ROLLOUT_TP`, default 1, was 2
+   upstream. It applies to proposer generation, solver training rollouts and
+   evaluation. On 4 GPUs this gives four full-model SGLang engines instead of
+   two TP-2 engines. Sampling parameters and the model are unchanged; only
+   floating-point reduction order differs, which is already non-deterministic.
+   It takes effect from the iteration-1 solver stage onward. The
+   iteration-1 proposer ran with TP 2.
+2. **Reward-server layout made explicit.** The proposer-reward SGLang server
+   used the launch scripts' shared `tp` / `dp` variables. It now uses
+   `REWARD_TP` / `REWARD_DP`, which default to the upstream tp 2 × dp 2. It is
+   also started with `--enable-metrics`, which only exposes Prometheus gauges.
+   Changing the layout is allowed later if the speed probe shows a data-parallel
+   group idling; it is a parallelism-only change.
+3. **Observability.** Two read-only additions: `run_p0.sh probe`
+   (`work3/speed_probe.py`) and a reward-server panel on the board. `patch` now
+   writes the launch scripts atomically (temp file + rename), so re-patching
+   while a stage runs cannot alter the script that stage is executing.
+4. Batch sizes are deliberately not changed. Per the factory's timing, the
+   update phase is about 5% of a proposer step, and GPU 0 has about 0.5 GB of
+   headroom at the training peak.

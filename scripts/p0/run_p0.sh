@@ -3,7 +3,7 @@
 # Protocol: research/protocols/P0_drzero_reproduction.md (frozen; see its addenda).
 #
 # Usage: bash scripts/p0/run_p0.sh <stage>
-#   check | prepare | patch | iter1 | iter2 | iter3 | eval0 | eval1 | eval2 | eval3 | gate | cleanup
+#   check | prepare | patch | iter1 | iter2 | iter3 | eval0 | eval1 | eval2 | eval3 | gate | cleanup | probe
 #
 # Required env:
 #   DRZERO_DIR    Dr. Zero checkout at the pinned commit (data/, corpus/, checkpoints/ live here)
@@ -20,6 +20,9 @@
 #   P0_REWARD_ARM (unset = upstream Dr. Zero reward; beta | ncp = P2 arm, set by scripts/p2/run_p2.sh)
 #   CHAL_ROLLOUT_MEM (0.45; proposer in-trainer SGLang memory fraction, upstream 0.25; memory only)
 #   EVAL_ROLLOUT_MEM (0.6; evaluation SGLang memory fraction; memory only)
+#   ROLLOUT_TP (1; in-trainer SGLang tensor parallel for proposer and solver, upstream 2; parallelism only)
+#   REWARD_TP (2) / REWARD_DP (NGPU/REWARD_TP): proposer-reward SGLang server layout (upstream tp=2)
+#   REWARD_METRICS (1; start the reward server with --enable-metrics for work3.speed_probe / the board)
 set -euo pipefail
 
 PIN=98c4a6dd2495e85d8b4d947ab4c030e540c922c5
@@ -35,6 +38,10 @@ E5_MODEL="${E5_MODEL:-intfloat/e5-base-v2}"
 RET_PORT="${RET_PORT:-8100}"
 REWARD_PORT="${REWARD_PORT:-8101}"
 CHAL_ROLLOUT_MEM="${CHAL_ROLLOUT_MEM:-0.45}"
+ROLLOUT_TP="${ROLLOUT_TP:-1}"
+REWARD_TP="${REWARD_TP:-2}"
+REWARD_DP="${REWARD_DP:-$(( NGPU / REWARD_TP ))}"
+REWARD_METRICS="${REWARD_METRICS:-1}"
 export DRZERO_DIR MODEL_3B
 MODEL_NAME="qwen2.5-3b-instruct"
 CKPT="checkpoints/dr-zero"
@@ -235,6 +242,13 @@ stage_patch() {
       # (factory feedback #2, bug 3), hence the absolute CONFIG_PATH above.
       if [ "$kind" = challenger ]; then
         sedargs+=(-e "s#actor_rollout_ref.rollout.gpu_memory_utilization=\${rollout_memory_utilization} \\\\\$#actor_rollout_ref.rollout.gpu_memory_utilization=$CHAL_ROLLOUT_MEM \\\\#")
+        # reward server layout is set explicitly; the in-trainer `tp` variable below no longer feeds it
+        sedargs+=(-e "s#^    --tp-size=\${tp} \\\\\$#    --tp-size=$REWARD_TP \\\\#"
+                  -e "s#^    --dp-size=\${dp} \\\\\$#    --dp-size=$REWARD_DP \\\\#")
+        [ "$REWARD_METRICS" = "1" ] && sedargs+=(-e "s#^    --log-level=error &\$#    --log-level=error --enable-metrics \\&#")
+      fi
+      if [ "$kind" != gen_data ]; then
+        sedargs+=(-e "s#^tp=2\$#tp=$ROLLOUT_TP#")
       fi
       [ "$FAISS_GPU" = "1" ] || sedargs+=(-e "/^ *--faiss_gpu \\\\\$/d")
       [ -z "${GEN_MEM:-}" ] || sedargs+=(-e "s#^rollout_memory_utilization=0.8\$#rollout_memory_utilization=$GEN_MEM#")
@@ -244,7 +258,10 @@ stage_patch() {
           -e "s#custom_reward_function.path=verl/custom_reward/reward_function.py \\\\\$#custom_reward_function.path=$WORK3_DIR/work3/ncp_reward.py \\\\\\n    +custom_reward_function.reward_kwargs.arm=$ARM \\\\#"
         )
       fi
-      sed "${sedargs[@]}" "iter${t}_${kind}.sh" > "$PATCHED/iter${t}_${kind}.sh"
+      # write to a temp file and rename: a stage that is currently executing an older patched
+      # script keeps reading its own (unlinked) copy, so re-patching mid-run is safe
+      sed "${sedargs[@]}" "iter${t}_${kind}.sh" > "$PATCHED/.iter${t}_${kind}.sh.tmp"
+      mv -f "$PATCHED/.iter${t}_${kind}.sh.tmp" "$PATCHED/iter${t}_${kind}.sh"
     done
   done
   if [ -n "$ARM" ]; then
@@ -265,6 +282,14 @@ stage_patch() {
   [ "$n_cfg" = 9 ] || { log "patch FAILED: absolute CONFIG_PATH in $n_cfg of 9 scripts"; exit 2; }
   local n_mem; n_mem=$(grep -l "rollout.gpu_memory_utilization=$CHAL_ROLLOUT_MEM " "$PATCHED"/iter*_challenger.sh | wc -l)
   [ "$n_mem" = 3 ] || { log "patch FAILED: proposer rollout memory set in $n_mem of 3 scripts"; exit 2; }
+  local n_rl; n_rl=$(grep -l "^    --tp-size=$REWARD_TP \\\\\$" "$PATCHED"/iter*_challenger.sh | wc -l)
+  [ "$n_rl" = 3 ] || { log "patch FAILED: reward server layout set in $n_rl of 3 scripts"; exit 2; }
+  local n_tp; n_tp=$(grep -l "^tp=$ROLLOUT_TP\$" "$PATCHED"/iter*_challenger.sh "$PATCHED"/iter*_solver.sh | wc -l)
+  [ "$n_tp" = 6 ] || { log "patch FAILED: in-trainer tp set in $n_tp of 6 scripts"; exit 2; }
+  if grep -n -- "--tp-size=\${tp}\|--dp-size=\${dp}" "$PATCHED"/iter*_challenger.sh; then
+    log "patch FAILED: reward server still follows the in-trainer tp/dp"; exit 2
+  fi
+  log "parallel layout: in-trainer rollout tp=$ROLLOUT_TP; reward server tp=$REWARD_TP dp=$REWARD_DP (metrics=$REWARD_METRICS)"
   grep -n "^gpus=\|^dp=\|^model=\|conda activate\|faiss_gpu\|retriever_model\|^rollout_memory\|gpu_memory_utilization\|mem-fraction\|p0_launch\|wait_retriever\|CONFIG_PATH=\|TOOL_CONFIG=\|--port=\|base_url" "$PATCHED"/iter1_*.sh
   log "patched scripts in $PATCHED"
 }
@@ -321,7 +346,7 @@ eval_model() {  # eval_model <t> <model_path>
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.gpu_memory_utilization="${EVAL_ROLLOUT_MEM:-0.6}" \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP" \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.multi_turn.tool_config_path="$PATCHED/search_tool_config.yaml" \
@@ -365,5 +390,9 @@ case "${1:-}" in
   eval0|eval1|eval2|eval3) stage_eval "${1#eval}" ;;
   gate) stage_gate ;;
   cleanup) cleanup_servers ;;
+  probe)   # read-only speed diagnosis of whatever stage is running now (factory feedback #3)
+    python -m work3.speed_probe --seconds "${PROBE_SECONDS:-120}" --reward-port "$REWARD_PORT" \
+      --retriever-stats "$OUT_ROOT/logs/retriever_stats.json" \
+      --out "$OUT_ROOT/speed_probe_$(date +%Y%m%d_%H%M%S).json" ;;
   *) sed -n '2,20p' "$0"; exit 1 ;;
 esac

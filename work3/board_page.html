@@ -223,6 +223,7 @@ function nowBox(r) {
      c.idle_seconds != null ? ` <span class="mute">日志 ${hms(c.idle_seconds)} 前更新</span>` : "") + `</div>`;
   if (c.explain) h += `<div class="nx">${esc(c.explain)}</div>`;
   if (c.fraction != null) h += `<div class="nb"><span>本步骤进度</span><div class="bar"><i style="width:${(c.fraction * 100).toFixed(1)}%"></i></div><em>${Math.round(c.fraction * 100)}%${c.steps_total ? `（训练第 ${c.steps_done} / ${c.steps_total} 步）` : "（按耗时估计）"}</em></div>`;
+  if (c.eta_basis) h += `<div class="mute small">剩余时间${esc(c.eta_basis)}估计（后期每步会越来越慢）</div>`;
   const ro = Object.entries(c.bars || {}).find(([k]) => /Rollout/.test(k));
   if (ro) h += `<div class="nb"><span>本步内采样</span><div class="bar thin"><i style="width:${ro[1].pct}%"></i></div><em>${ro[1].n} / ${ro[1].total}　${esc(ro[1].info)}</em></div>`;
   const ls = c.last_step;
@@ -445,6 +446,13 @@ async function loadHistory() {
   let html = lineChart("h-power", "功率（W）", per("power"), {xfmt, xlabel: "时间", legend: true}) +
              lineChart("h-util", "GPU 利用率（%）", per("util"), {xfmt, xlabel: "时间", legend: true}) +
              lineChart("h-mem", "显存（GB）", per("mem", v => v == null ? null : v / 1024), {xfmt, xlabel: "时间", legend: true});
+  const rw = h.reward || [];
+  if (rw.length) {
+    const rx = rw.map(r => xm(r.t));
+    html += lineChart("h-rw-req", "奖励服务请求数（运行中 / 排队）", [{name: "运行中", xs: rx, ys: rw.map(r => r.running)}, {name: "排队", xs: rx, ys: rw.map(r => r.queued)}], {xfmt, xlabel: "时间", legend: true}) +
+            lineChart("h-rw-kv", "奖励服务 KV 缓存占用（最高的那个 rank）", [{name: "KV 占用", xs: rx, ys: rw.map(r => r.token_usage_max)}], {xfmt, xlabel: "时间"}) +
+            lineChart("h-rw-tp", "奖励服务生成吞吐（token/秒）", [{name: "吞吐", xs: rx, ys: rw.map(r => r.gen_throughput)}], {xfmt, xlabel: "时间"});
+  }
   for (const [run, rs] of Object.entries(h.retriever || {})) {
     html += lineChart("h-ret-" + run, `检索延迟（ms）· ${run}`, [{name: "p50", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.p50)}, {name: "p95", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.p95)}], {xfmt, xlabel: "时间", legend: true}) +
             lineChart("h-rps-" + run, `检索请求（次/秒）与进行中请求数 · ${run}`, [{name: "次/秒", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.rps)}, {name: "进行中", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.in_flight)}], {xfmt, xlabel: "时间", legend: true});

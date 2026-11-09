@@ -254,16 +254,26 @@ class History:
         self.retriever: Dict[str, "collections.deque"] = collections.defaultdict(
             lambda: collections.deque(maxlen=maxlen))
         self.gpu_fn = gpu_fn or gpus
+        self.reward = collections.deque(maxlen=maxlen)       # proposer-reward SGLang /metrics
+        port = os.environ.get("BOARD_REWARD_PORT") or os.environ.get("REWARD_PORT") or "8101"
+
+        def reward_fn():
+            from work3.speed_probe import reward_metrics
+            return reward_metrics(int(port))
+        self.reward_fn = reward_fn if gpu_fn is None else None   # tests inject gpu_fn and skip HTTP
         self.lock = threading.Lock()
         self._last_ret: Dict[str, float] = {}
 
     def sample_once(self, now: Optional[float] = None) -> None:
         now = time.time() if now is None else now
         g = self.gpu_fn()
+        rm = self.reward_fn() if self.reward_fn else None
         with self.lock:
             if g:
                 self.gpu.append({"t": now, "gpus": [{"util": x["util"], "power": x["power"],
                                                      "mem": x["mem_used"]} for x in g]})
+            if rm:
+                self.reward.append({"t": now, **rm})
             for run_id, _, run_dir, _, _ in self.board.specs:
                 s = load_json(run_dir / "logs" / "retriever_stats.json")
                 if s and s.get("updated") and s["updated"] != self._last_ret.get(run_id):
@@ -285,7 +295,7 @@ class History:
     def snapshot(self) -> dict:
         with self.lock:
             return {"gpu": list(self.gpu), "retriever": {k: list(v) for k, v in self.retriever.items()},
-                    "interval": self.interval}
+                    "reward": list(self.reward), "interval": self.interval}
 
 
 def scan_errors(text: str) -> dict:
@@ -523,7 +533,7 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
         steps = step_metrics(text)
         current = {"stage": active["name"], "label": active["label"], "state": active["state"],
                    "started": None, "bars": bars, "last_step": steps[-1] if steps else None,
-                   "updated": active["log_mtime"]}
+                   "updated": active["log_mtime"], "_steps": steps}
         if active["state"] in ("running", "stalled") and active["log_mtime"]:
             current["idle_seconds"] = round(now - active["log_mtime"])
     # Duration estimate per stage: observed mean of the same stage type, else the guide's default.
@@ -545,6 +555,13 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
                 current["steps_done"], current["steps_total"] = max(0, bar["n"] - base), max(0, bar["total"] - base)
             if frac is None and last_end:                      # no step bar: elapsed since previous stage ended
                 frac = min(0.95, max(0.0, (now - last_end) / r["est_seconds"]))
+            # Steps get slower as the proposer improves (more valid questions to score), so the
+            # remaining time of a training stage uses the mean of its latest five step times.
+            recent = [s["timing_s/step"] for s in current.pop("_steps", []) if "timing_s/step" in s][-5:]
+            if recent and current.get("steps_total") and frac is not None and frac < 1:
+                left = (current["steps_total"] - current["steps_done"]) * sum(recent) / len(recent)
+                r["est_seconds"] = left / (1 - frac)
+                current["eta_basis"] = f"按最近 {len(recent)} 步平均 {round(sum(recent) / len(recent))} 秒/步"
             current["fraction"] = frac
             current["elapsed_seconds"] = round(now - last_end) if last_end else None
             r["fraction"] = frac or 0.0
@@ -552,6 +569,7 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
     done_part = sum(r["est_seconds"] * r["fraction"] for r in rows)
     remaining = sum(r["est_seconds"] * (1 - r["fraction"]) for r in rows if r["state"] != "done")
     if current:
+        current.pop("_steps", None)
         current["explain"] = STAGE_TEXT.get(stage_type(current["stage"]), "")
     # errors over all logs (tails)
     errors = {"traceback": 0, "failed": 0, "oom": 0, "undefined_function": 0,
