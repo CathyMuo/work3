@@ -111,7 +111,17 @@ class RunStatusTest(unittest.TestCase):
             self.assertAlmostEqual(st["current"]["fraction"], 0.04)
             self.assertGreater(st["eta_seconds"], 0)
             self.assertAlmostEqual(st["evals"]["1"]["average"], 0.3)
-            self.assertEqual(st["curves"]["reward"], [0.41, 0.45])
+            labels = [l["label"] for l in st["lanes"]]
+            self.assertEqual(labels, ["准备", "第 1 轮", "第 2 轮", "第 3 轮", "收尾"])
+            lane1 = {s["label"]: s for s in st["lanes"][1]["segments"]}
+            self.assertEqual([s["state"] for s in st["lanes"][1]["segments"]], ["done"] * 4)
+            self.assertAlmostEqual(lane1["评测"]["em"], 0.3)
+            seg2 = st["lanes"][2]["segments"][0]
+            self.assertEqual((seg2["label"], seg2["state"]), ("出题者训练", "running"))
+            self.assertAlmostEqual(seg2["fraction"], 0.04)
+            self.assertTrue(0 < st["overall_fraction"] < 1)
+            self.assertGreater(st["finish_at"], time.time())
+            self.assertIn("出题者训练", st["current"]["explain"])
             self.assertEqual(st["retriever"]["p50_ms"], 12.0)
             self.assertEqual(st["pool_checks"], {"pool_check_iter1": True})
 
@@ -207,6 +217,13 @@ class ServerTest(unittest.TestCase):
                 self.assertEqual(json.loads(urllib.request.urlopen(base + "/api/rewardlog?run=p0").read())["rows"], [])
                 with self.assertRaises(urllib.error.HTTPError):
                     urllib.request.urlopen(base + "/api/metrics?run=p0&stage=nope")
+                brief = urllib.request.urlopen(base + "/api/briefing").read().decode()
+                self.assertIn("NCP", brief)
+                rm = st["roadmap"]
+                self.assertEqual([p["key"] for p in rm], ["P0", "P1", "P2", "M", "S"])
+                self.assertEqual(rm[0]["state"], "running")
+                self.assertEqual(rm[0]["result"], "第 1 轮 EM 0.300")
+                self.assertEqual(rm[1]["state"], "pending")
                 with self.assertRaises(urllib.error.HTTPError):
                     urllib.request.urlopen(base + "/api/log?run=nope")
             finally:

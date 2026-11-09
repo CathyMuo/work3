@@ -393,6 +393,87 @@ def eval_average(eval_dir: Path) -> Optional[dict]:
     return val
 
 
+STAGE_TEXT = {
+    "prepare_train": "准备数据：生成出题种子、测试集和验证集。",
+    "prepare_test": "准备数据：生成出题种子、测试集和验证集。",
+    "prepare_val": "准备数据：生成出题种子、测试集和验证集。",
+    "challenger": "出题者训练：出题者从维基百科文档出发，边搜索边出多跳题；每道题让解题者答 5 次，"
+                  "按答对次数给出题奖励，再用强化学习（HRPO）更新出题者。共 50 步，每步 256 道题。",
+    "gen_data": "生成题池：用刚训练好的出题者为解题者生成约 3.4 万道训练题（每个种子采样 5 次，取格式最好的一道）。",
+    "pool_check": "题池检查：确认题池里存的是解题者提示（防止 pandas 版本问题写坏数据）。",
+    "solver": "解题者训练：解题者在新题池上用 GRPO 训练 50 步，每题 5 次多轮“思考→搜索→作答”。",
+    "convert": "转换检查点：把解题者的 FSDP 检查点转成 HuggingFace 格式，供下一轮出题者打分和评测使用。",
+    "eval": "评测：在 7 个 QA 数据集（共 51,713 题）上用贪心解码测 EM，是 P0 门槛的依据。",
+    "pool": "P1 诊断：抽题池中的题，每题解答 5 次，每次再做 2 次只打乱文档顺序的重放，测量成败中“运气”的占比。",
+    "parity": "一致性检查：核对 P1 拼出的提示与上游 verl 逐字一致（只用 CPU）。",
+}
+
+
+def stage_type(name: str) -> str:
+    if name.startswith("prepare_"):
+        return name
+    return re.sub(r"^iter\d_|\d$", "", name)
+
+
+LANE_SEGMENTS = [("出题者训练", ("challenger",)), ("生成题池", ("gen_data", "pool_check")),
+                 ("解题者训练", ("solver", "convert")), ("评测", ("eval",))]
+
+
+def _segment(label: str, members: List[dict], extra: Optional[dict] = None) -> dict:
+    states = [m["state"] for m in members]
+    if not members:
+        state = "pending"
+    elif "failed" in states:
+        state = "failed"
+    elif "stalled" in states:
+        state = "stalled"
+    elif "running" in states or ("done" in states and "pending" in states):
+        state = "running"
+    elif all(s == "done" for s in states):
+        state = "done"
+    else:
+        state = "pending"
+    est = sum(m["est_seconds"] for m in members)
+    frac = (sum(m["est_seconds"] * m["fraction"] for m in members) / est) if est else 0.0
+    seg = {"label": label, "state": state, "est_seconds": est, "fraction": frac,
+           "seconds": sum(m["seconds"] or 0 for m in members) or None,
+           "stages": [m["name"] for m in members]}
+    seg.update(extra or {})
+    return seg
+
+
+def build_lanes(rows: List[dict], kind: str, evals: dict, has_summary: bool) -> List[dict]:
+    """Group raw stages into a few readable lanes: 准备 / 第 t 轮 (4 segments) / 收尾."""
+    by = {r["name"]: r for r in rows}
+    lanes = []
+    if kind == "p0":
+        prep = [by[n] for n in ("prepare_train", "prepare_test", "prepare_val") if n in by]
+        if prep:
+            lanes.append({"label": "准备", "segments": [_segment("准备数据", prep)]})
+        for t in (1, 2, 3):
+            segs = []
+            for label, types in LANE_SEGMENTS:
+                names = [f"eval{t}"] if types == ("eval",) else [f"iter{t}_{x}" for x in types]
+                members = [by[n] for n in names if n in by]
+                if members:
+                    extra = {"em": (evals.get(str(t)) or {}).get("average")} if types == ("eval",) else None
+                    segs.append(_segment(label, members, extra))
+            if segs:
+                lanes.append({"label": f"第 {t} 轮", "segments": segs})
+        tail = []
+        if "eval0" in by:
+            tail.append(_segment("基座模型评测（参考）", [by["eval0"]], {"em": (evals.get("0") or {}).get("average")}))
+        tail.append({"label": "门槛判定", "state": "done" if has_summary else "pending", "est_seconds": 60,
+                     "fraction": 1.0 if has_summary else 0.0, "seconds": None, "stages": []})
+        lanes.append({"label": "收尾", "segments": tail})
+    else:
+        segs = [_segment(r["label"], [r]) for r in rows]
+        segs.append({"label": "汇总判定", "state": "done" if has_summary else "pending", "est_seconds": 60,
+                     "fraction": 1.0 if has_summary else 0.0, "seconds": None, "stages": []})
+        lanes.append({"label": "诊断", "segments": segs})
+    return lanes
+
+
 def training_fraction(stage: str, bar: Optional[dict]) -> Optional[float]:
     """Share of this stage's 50 steps done. Proposer iterations resume (total 50/100/150)."""
     if not bar or not bar.get("total"):
@@ -445,31 +526,33 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
                    "updated": active["log_mtime"]}
         if active["state"] in ("running", "stalled") and active["log_mtime"]:
             current["idle_seconds"] = round(now - active["log_mtime"])
-    # ETA: observed mean per stage type, else defaults; running stage scaled by training progress
+    # Duration estimate per stage: observed mean of the same stage type, else the guide's default.
     observed: Dict[str, List[int]] = {}
     for r in rows:
         if r["state"] == "done" and r["seconds"]:
-            observed.setdefault(re.sub(r"^iter\d_|\d$", "", r["name"]), []).append(r["seconds"])
-    remaining = 0.0
+            observed.setdefault(stage_type(r["name"]), []).append(r["seconds"])
+    last_end = max((t["end"] for t in parse_timings(run_dir / "timings.txt").values() if t["end"]), default=None)
     for r in rows:
-        if r["state"] in ("done",):
-            continue
-        typ = re.sub(r"^iter\d_|\d$", "", r["name"])
-        est = (sum(observed[typ]) / len(observed[typ])) if typ in observed else r["default_hours"] * 3600
-        if current and r["name"] == current["stage"]:
-            frac = training_fraction(r["name"], current["bars"].get("Training Progress"))
+        typ = stage_type(r["name"])
+        r["est_seconds"] = (sum(observed[typ]) / len(observed[typ])) if typ in observed else r["default_hours"] * 3600
+        r["fraction"] = 1.0 if r["state"] == "done" else 0.0
+        if current and r["name"] == current["stage"] and r["state"] in ("running", "stalled"):
+            bar = current["bars"].get("Training Progress")
+            frac = training_fraction(r["name"], bar)
+            if bar:
+                mm = re.match(r"iter(\d)_challenger$", r["name"])
+                base = 50 * (int(mm.group(1)) - 1) if mm else 0
+                current["steps_done"], current["steps_total"] = max(0, bar["n"] - base), max(0, bar["total"] - base)
+            if frac is None and last_end:                      # no step bar: elapsed since previous stage ended
+                frac = min(0.95, max(0.0, (now - last_end) / r["est_seconds"]))
             current["fraction"] = frac
-            if frac:
-                est = est * (1 - frac)
-        remaining += est
-    # training curves of the most relevant training log
-    curve_stage = next((r["name"] for r in reversed(rows)
-                        if r["state"] != "pending" and ("challenger" in r["name"] or "solver" in r["name"])), None)
-    curves = {}
-    if curve_stage:
-        text = tail_text(run_dir / "logs" / f"{curve_stage}.log", 4_000_000)
-        curves = {"stage": curve_stage, "reward": reward_series(text) if "challenger" in curve_stage else [],
-                  "steps": step_metrics(text)}
+            current["elapsed_seconds"] = round(now - last_end) if last_end else None
+            r["fraction"] = frac or 0.0
+    total = sum(r["est_seconds"] for r in rows) or 1.0
+    done_part = sum(r["est_seconds"] * r["fraction"] for r in rows)
+    remaining = sum(r["est_seconds"] * (1 - r["fraction"]) for r in rows if r["state"] != "done")
+    if current:
+        current["explain"] = STAGE_TEXT.get(stage_type(current["stage"]), "")
     # errors over all logs (tails)
     errors = {"traceback": 0, "failed": 0, "oom": 0, "undefined_function": 0,
               "undefined_function_names": {}, "last_lines": []}
@@ -489,9 +572,13 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
                 evals[str(t)] = eval_average(d)
     summary_name = "p0_summary.json" if kind == "p0" else "p1_summary.json"
     summary = load_json(run_dir / summary_name)
+    started = any(r["state"] != "pending" for r in rows)
     return {"id": run_id, "title": title, "dir": str(run_dir), "kind": kind, "exists": run_dir.is_dir(),
-            "stages": rows, "current": current, "eta_seconds": round(remaining) if run_dir.is_dir() else None,
-            "curves": curves, "errors": errors, "evals": evals, "threshold": P0_THRESHOLD,
+            "started": started, "stages": rows, "current": current,
+            "eta_seconds": round(remaining) if run_dir.is_dir() else None,
+            "overall_fraction": done_part / total, "finish_at": (now + remaining) if started else None,
+            "lanes": build_lanes(rows, kind, evals, bool(summary)),
+            "errors": errors, "evals": evals, "threshold": P0_THRESHOLD,
             "summary": ({k: summary.get(k) for k in ("verdict", "problems", "pooled", "primary",
                                                      "threshold_iter3_average")} if summary else None),
             "retriever": load_json(run_dir / "logs" / "retriever_stats.json"),
@@ -562,8 +649,9 @@ class Board:
     def state(self) -> dict:
         now = time.time()
         runs = [run_status(i, t, d, plan, k, now) for i, t, d, plan, k in self.specs]
-        return {"now": now, "runs": runs, "gpus": gpus(),
-                "p2": load_json(self.p2_summary) if self.p2_summary else None}
+        p2 = load_json(self.p2_summary) if self.p2_summary else None
+        return {"now": now, "runs": runs, "gpus": gpus(), "p2": p2,
+                "roadmap": roadmap(runs, p2, load_json(self.root / "research/STATE.json") or {})}
 
     def log_tail(self, run_id: str, lines: int = 80) -> Optional[dict]:
         spec = next((s for s in self.specs if s[0] == run_id), None)
@@ -573,6 +661,57 @@ class Board:
         if not logs:
             return {"file": None, "lines": []}
         return {"file": logs[0].name, "lines": [ln[:400] for ln in clean_lines(tail_text(logs[0], 200_000))[-lines:]]}
+
+
+ROADMAP_GATES = {
+    "P0": "第 3 轮 7 数据集平均 EM ≥ 0.306（论文 0.326）",
+    "P1": "k=1 题的噪声占比 η ≥ 0.35，且比 k=3–4 的题高 ≥ 0.10",
+    "P2": "NCP 比 Dr. Zero 高 ≥ 2 pp、比 Beta 高 ≥ 1 pp，且第 3 轮不下降",
+    "M": "P2 通过后另行登记：多种子、7B、消融、推广",
+}
+VERDICT_TEXT = {"PASS": ("通过", "done"), "FAIL": ("未通过", "failed"), "INVALID": ("无效，需重跑", "stalled"),
+                "GO": ("通过（GO）", "done"), "NO-GO": ("未通过（NO-GO）", "failed")}
+
+
+def roadmap(runs: List[dict], p2: Optional[dict], state: dict) -> List[dict]:
+    by = {r["id"]: r for r in runs}
+
+    def phase(key, title, what, run_ids, verdict=None, result=None):
+        rs = [by[i] for i in run_ids if i in by]
+        if verdict in VERDICT_TEXT:
+            status, cls = VERDICT_TEXT[verdict]
+        elif any(r["started"] for r in rs):
+            done = [r["overall_fraction"] for r in rs if r["started"]]
+            status, cls = f"进行中 {round(100 * sum(done) / max(1, len(rs)))}%", "running"
+        else:
+            status, cls = "未开始", "pending"
+        return {"key": key, "title": title, "what": what, "gate": ROADMAP_GATES.get(key, ""),
+                "status": status, "state": cls, "result": result}
+
+    p0 = by.get("p0") or {}
+    p0_em = [(t, e.get("average")) for t, e in sorted((p0.get("evals") or {}).items())
+             if t != "0" and e and e.get("average") is not None]
+    p0_res = f"第 {p0_em[-1][0]} 轮 EM {p0_em[-1][1]:.3f}" if p0_em else None
+    p1 = by.get("p1") or {}
+    pooled = ((p1.get("summary") or {}).get("pooled") or {})
+    p1_res = (f"η(k=1) {pooled['eta_k1']:.2f}，差值 {pooled['diff']:.2f}"
+              if pooled.get("eta_k1") is not None and pooled.get("diff") is not None else None)
+    prim = (p2 or {}).get("primary") or {}
+    p2_res = (f"NCP−Dr.Zero {prim['ncp_minus_drzero'] * 100:+.1f} pp"
+              if prim.get("ncp_minus_drzero") is not None else None)
+    venue = (state.get("target_venue") or {})
+    return [
+        phase("P0", "P0 复现基线", "复现 Dr. Zero 3B 三轮自我进化", ["p0"],
+              (p0.get("summary") or {}).get("verdict"), p0_res),
+        phase("P1", "P1 噪声诊断", "测题池里“运气”的占比，证伪核心假设", ["p1"],
+              (p1.get("summary") or {}).get("verdict"), p1_res),
+        phase("P2", "P2 方法对比", "Dr. Zero / Beta 平滑 / NCP 三臂对比", ["p2-beta", "p2-ncp"],
+              (p2 or {}).get("verdict"), p2_res),
+        phase("M", "主实验", "多种子、7B、消融、推广到其他自博弈", []),
+        {"key": "S", "title": "投稿", "what": f"{venue.get('primary', 'ICML 2027')}（备选 {venue.get('alternative', 'SIGIR 2027')}）",
+         "gate": f"{venue.get('decide_by', '2026-12-15')} 前确定投哪个会", "status": "预计 2027-01 下旬",
+         "state": "pending", "result": None},
+    ]
 
 
 def gpus() -> Optional[List[dict]]:
@@ -617,6 +756,10 @@ def make_handler(board: Board):
                     self.send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
                 elif url.path == "/api/research":
                     self.json(research(board.root))
+                elif url.path == "/api/briefing":
+                    path = board.root / "research" / "briefing.html"
+                    body = path.read_bytes() if path.exists() else "<p>research/briefing.html 不存在</p>".encode()
+                    self.send(200, body, "text/html; charset=utf-8")
                 elif url.path == "/api/state":
                     self.json(board.state())
                 elif url.path == "/api/log":

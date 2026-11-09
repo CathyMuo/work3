@@ -5,56 +5,141 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Work 3 看板</title>
 <style>
-:root { --bg:#f6f7f9; --card:#fff; --ink:#1d2430; --mute:#6a7383; --line:#e1e5eb;
-        --ok:#1f8f4e; --run:#2563eb; --bad:#c43c3c; --warn:#b7791f; --pend:#9aa3b2; }
-@media (prefers-color-scheme: dark) { :root { --bg:#14171c; --card:#1c2027; --ink:#e6e9ee; --mute:#9aa3b2;
-        --line:#2c323c; --ok:#4cc38a; --run:#6ea0ff; --bad:#ff7a7a; --warn:#f0b75a; --pend:#6a7383; } }
+:root { --bg:#f4f5f7; --card:#fff; --ink:#18202c; --mute:#677184; --line:#e2e6ec; --soft:#f0f3f8;
+        --ok:#178a4c; --okbg:#e3f4ea; --run:#2459d6; --runbg:#e6eefc; --bad:#c23a3a; --badbg:#fbe9e9;
+        --warn:#a86b12; --warnbg:#fbf1e0; --pend:#a3abb8; --pendbg:#eef0f3; --acc:#6d4bd8; }
+@media (prefers-color-scheme: dark) { :root { --bg:#12151a; --card:#1b1f26; --ink:#e7eaef; --mute:#99a2b1; --line:#2b313b; --soft:#20252e;
+        --ok:#4cc38a; --okbg:#173326; --run:#76a3ff; --runbg:#1b2a47; --bad:#ff8080; --badbg:#3a1d1f;
+        --warn:#f0b75a; --warnbg:#3a2d17; --pend:#6c7584; --pendbg:#252a33; --acc:#a58cff; } }
 * { box-sizing:border-box; }
-body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.55 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
-header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; }
-header h1 { font-size:18px; margin:0; }
-nav button { border:1px solid var(--line); background:var(--card); color:var(--ink); padding:5px 12px; border-radius:6px; cursor:pointer; }
-nav button.on { border-color:var(--run); color:var(--run); }
-main { padding:16px 20px; max-width:1280px; margin:0 auto; }
-.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:14px; }
-.card h2 { font-size:15px; margin:0 0 10px; }
-.mute { color:var(--mute); }
+body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+header { position:sticky; top:0; z-index:5; background:var(--card); padding:12px 24px; border-bottom:1px solid var(--line); display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
+header h1 { font-size:17px; margin:0; letter-spacing:.2px; }
+nav { display:flex; gap:6px; flex-wrap:wrap; }
+nav button { border:1px solid var(--line); background:var(--card); color:var(--ink); padding:6px 14px; border-radius:8px; cursor:pointer; font-size:14px; }
+nav button.on { background:var(--run); border-color:var(--run); color:#fff; }
+#upd { margin-left:auto; }
+main { padding:18px 24px 40px; max-width:1240px; margin:0 auto; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:16px; }
+.card h2 { font-size:16px; margin:0 0 12px; }
+.mute { color:var(--mute); } .small { font-size:12.5px; }
 table { border-collapse:collapse; width:100%; margin:6px 0 10px; }
-th, td { border-bottom:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top; }
+th, td { border-bottom:1px solid var(--line); padding:6px 9px; text-align:left; vertical-align:top; }
 th { color:var(--mute); font-weight:600; }
-code { background:rgba(127,127,127,.12); padding:1px 4px; border-radius:4px; }
-.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
-.pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; border:1px solid currentColor; }
+code { background:var(--soft); padding:1px 5px; border-radius:4px; }
+pre { white-space:pre-wrap; word-break:break-all; font-size:12px; background:var(--soft); padding:9px; border-radius:8px; max-height:380px; overflow:auto; }
+details { border-top:1px solid var(--line); padding:8px 0 2px; margin-top:10px; } summary { cursor:pointer; color:var(--mute); }
 .done { color:var(--ok); } .running { color:var(--run); } .failed { color:var(--bad); } .stalled { color:var(--warn); } .pending { color:var(--pend); }
-.stages { display:flex; flex-wrap:wrap; gap:6px; }
-.stage { border:1px solid var(--line); border-radius:6px; padding:3px 8px; font-size:12.5px; }
-.bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin:4px 0 8px; }
-.bar > i { display:block; height:100%; background:var(--run); }
-pre { white-space:pre-wrap; word-break:break-all; font-size:12px; background:rgba(127,127,127,.08); padding:8px; border-radius:6px; max-height:360px; overflow:auto; }
-details { border-top:1px solid var(--line); padding:6px 0; } summary { cursor:pointer; }
-.big { font-size:22px; font-weight:650; }
-svg { width:100%; height:140px; }
-.lnk { text-decoration:underline dotted; }
+.ps { display:inline-block; padding:1px 9px; border-radius:999px; font-size:12px; font-weight:600; }
+.ps.done { background:var(--okbg); } .ps.running { background:var(--runbg); } .ps.failed { background:var(--badbg); } .ps.stalled { background:var(--warnbg); } .ps.pending { background:var(--pendbg); color:var(--mute); }
+.bar { height:10px; background:var(--pendbg); border-radius:6px; overflow:hidden; flex:1; }
+.bar > i { display:block; height:100%; background:var(--run); border-radius:6px; transition:width .6s; }
+.bar.big { height:16px; } .bar.thin { height:6px; }
+/* roadmap */
+.road { display:grid; grid-template-columns:repeat(5, 1fr); gap:0; position:relative; }
+.ph { position:relative; padding:0 10px 4px; text-align:center; }
+.ph::before { content:""; position:absolute; top:15px; left:-50%; width:100%; height:3px; background:var(--line); z-index:0; }
+.ph:first-child::before { display:none; }
+.ph.done::before, .ph.running::before { background:var(--ok); }
+.ph .dot { position:relative; z-index:1; width:32px; height:32px; margin:0 auto 6px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; background:var(--pendbg); color:var(--mute); border:2px solid var(--line); }
+.ph.done .dot { background:var(--ok); color:#fff; border-color:var(--ok); }
+.ph.running .dot { background:var(--run); color:#fff; border-color:var(--run); }
+.ph.failed .dot { background:var(--bad); color:#fff; border-color:var(--bad); }
+.ph.stalled .dot { background:var(--warn); color:#fff; border-color:var(--warn); }
+.pt { font-weight:650; } .pw { font-size:12.5px; color:var(--mute); margin-top:4px; }
+.pr { font-size:13px; font-weight:650; margin-top:4px; } .pg { font-size:11.5px; color:var(--mute); margin-top:4px; border-top:1px dashed var(--line); padding-top:4px; }
+/* run card */
+.rh { display:flex; align-items:center; gap:12px; } .rh h2 { margin:0; }
+.overall { margin:12px 0 14px; } .ov { display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; margin-top:6px; } .ov > b { font-size:22px; }
+.now { border-radius:10px; padding:12px 14px; margin-bottom:14px; background:var(--soft); border-left:4px solid var(--pend); }
+.now.running { background:var(--runbg); border-left-color:var(--run); } .now.stalled { background:var(--warnbg); border-left-color:var(--warn); }
+.now.failed { background:var(--badbg); border-left-color:var(--bad); } .now.done { background:var(--okbg); border-left-color:var(--ok); }
+.nt { font-size:15px; } .nx { color:var(--mute); margin:4px 0 8px; font-size:13px; }
+.nb { display:flex; align-items:center; gap:10px; margin:6px 0; } .nb > span { width:84px; color:var(--mute); font-size:12.5px; } .nb > em { font-style:normal; font-size:12.5px; min-width:150px; }
+.lanes { display:flex; flex-direction:column; gap:8px; }
+.lane { display:grid; grid-template-columns:64px 1fr; align-items:center; gap:10px; }
+.ll { font-weight:650; font-size:13px; color:var(--mute); text-align:right; }
+.lbar { display:flex; gap:4px; }
+.seg { position:relative; height:42px; border-radius:8px; background:var(--pendbg); overflow:hidden; min-width:0; border:1px solid transparent; }
+.seg.running { border-color:var(--run); } .seg.stalled { border-color:var(--warn); } .seg.failed { border-color:var(--bad); background:var(--badbg); }
+.segfill { position:absolute; inset:0 auto 0 0; background:var(--okbg); }
+.seg.running .segfill, .seg.stalled .segfill { background:repeating-linear-gradient(45deg, var(--runbg), var(--runbg) 8px, rgba(36,89,214,.18) 8px, rgba(36,89,214,.18) 16px); }
+.segl { position:relative; padding:0 8px; line-height:40px; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.seg.done .segl { color:var(--ok); } .seg.running .segl { color:var(--run); font-weight:600; } .seg.pending .segl { color:var(--mute); }
+.em { margin-left:6px; color:var(--ink); } .em.good { color:var(--ok); }
+.emrow { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+.emc { flex:1; min-width:120px; background:var(--soft); border-radius:10px; padding:8px 12px; display:flex; flex-direction:column; }
+.emc span { font-size:12px; color:var(--mute); } .emc b { font-size:20px; } .emc em { font-style:normal; font-size:11.5px; color:var(--mute); }
+.emc.gate { background:var(--warnbg); }
+.gpus { display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:12px; }
+.gpu { background:var(--soft); border-radius:10px; padding:10px 12px; }
+.gl { display:grid; grid-template-columns:42px 1fr 108px; align-items:center; gap:8px; font-size:12px; margin-top:5px; }
+.gl span { color:var(--mute); } .gl em { font-style:normal; text-align:right; }
+.meter { height:7px; background:var(--pendbg); border-radius:4px; overflow:hidden; } .meter i { display:block; height:100%; }
+.meter.u i { background:var(--run); } .meter.p i { background:var(--warn); } .meter.m i { background:var(--acc); }
+@media (max-width: 760px) { .road { grid-template-columns:1fr; gap:10px; } .ph { text-align:left; padding-left:44px; } .ph .dot { position:absolute; left:0; top:0; }
+  .ph::before { display:none; } .lane { grid-template-columns:1fr; } .ll { text-align:left; } .seg { height:auto; } .segl { line-height:1.4; padding:6px 8px; white-space:normal; } .lbar { flex-direction:column; } }
+/* curves */
 .ctl { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; }
 .ctl select, .ctl button { border:1px solid var(--line); background:var(--card); color:var(--ink); padding:4px 8px; border-radius:6px; }
 .chips { display:flex; flex-wrap:wrap; gap:5px; margin:6px 0; }
 .chip { border:1px solid var(--line); border-radius:999px; padding:1px 9px; font-size:12px; cursor:pointer; background:var(--card); color:var(--ink); }
-.chip.on { border-color:var(--run); color:var(--run); background:rgba(37,99,235,.08); }
+.chip.on { border-color:var(--run); color:var(--run); background:var(--runbg); }
 .charts { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(420px,100%),1fr)); gap:12px; }
 .chart { position:relative; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 10px 6px; }
 .chart h3 { font-size:13px; margin:0 0 2px; font-weight:600; word-break:break-all; }
-.chart svg { height:200px; display:block; }
+.chart svg { width:100%; height:200px; display:block; }
 .chart .legend { font-size:11.5px; color:var(--mute); display:flex; flex-wrap:wrap; gap:4px 12px; }
 .chart .legend i { display:inline-block; width:10px; height:3px; margin-right:4px; vertical-align:middle; }
 .tip { position:absolute; pointer-events:none; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px 7px; font-size:11.5px; box-shadow:0 2px 8px rgba(0,0,0,.12); white-space:nowrap; z-index:2; }
-.axis { fill:var(--mute); font-size:10px; }
-.gridl { stroke:var(--line); stroke-width:1; }
+.axis { fill:var(--mute); font-size:10px; } .gridl { stroke:var(--line); stroke-width:1; }
+.lnk { text-decoration:underline dotted; }
+/* briefing */
+.brief { max-width:960px; margin:0 auto; }
+.brief .hero { background:linear-gradient(135deg, var(--runbg), var(--card)); border:1px solid var(--line); border-radius:16px; padding:28px 30px; margin-bottom:18px; }
+.brief .kicker { color:var(--run); font-weight:650; font-size:13px; letter-spacing:.5px; }
+.brief .hero h1 { font-size:26px; line-height:1.35; margin:8px 0 12px; }
+.brief .lead { font-size:15.5px; line-height:1.8; margin:0; }
+.brief .tags { margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; } .brief .tags span { background:var(--card); border:1px solid var(--line); border-radius:999px; padding:2px 10px; font-size:12px; color:var(--mute); }
+.brief .sec { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 26px; margin-bottom:16px; }
+.brief h2 { font-size:19px; margin:0 0 12px; display:flex; align-items:center; gap:10px; }
+.brief h2 i { font-style:normal; width:28px; height:28px; border-radius:50%; background:var(--run); color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:14px; }
+.brief h3 { font-size:15px; margin:18px 0 8px; }
+.brief p, .brief li { font-size:14.5px; line-height:1.85; }
+.brief .cols { display:grid; grid-template-columns:1.3fr 1fr; gap:18px; align-items:start; } .brief .cols.eq { grid-template-columns:1fr 1fr; }
+.brief .callout { background:var(--warnbg); border-left:4px solid var(--warn); border-radius:8px; padding:12px 14px; font-size:14px; line-height:1.8; }
+.brief .note { color:var(--mute); font-size:13px; }
+.brief .formula { font-family:"Cambria Math","Times New Roman",serif; font-size:18px; text-align:center; background:var(--soft); border-radius:10px; padding:14px; margin:10px 0; }
+.brief .formula.big { font-size:19px; }
+.brief .formula .g { color:var(--ok); } .brief .formula .r { color:var(--bad); }
+.brief .pill { border-radius:10px; padding:10px 12px; font-size:13.5px; } .brief .pill.g { background:var(--okbg); } .brief .pill.r { background:var(--badbg); }
+.brief ul.ticks { padding-left:20px; }
+.brief table.num td:not(:first-child), .brief table.num th:not(:first-child) { text-align:center; }
+.brief td.good { color:var(--ok); font-weight:650; } .brief td.bad, .brief .bad { color:var(--bad); font-weight:650; } .brief .dim { color:var(--mute); font-weight:400; font-size:12px; }
+.brief .ok { fill:var(--ok); font-weight:650; } .brief text.bad { fill:var(--bad); }
+.brief .fig { margin:12px 0 4px; background:var(--soft); border-radius:12px; padding:12px; }
+.brief .fig svg { width:100%; height:auto; display:block; color:var(--mute); }
+.brief .fig figcaption { font-size:13px; color:var(--mute); margin-top:6px; line-height:1.7; }
+.brief .node rect { fill:var(--card); stroke:var(--line); stroke-width:1.5; }
+.brief .node.acc rect { stroke:var(--run); fill:var(--runbg); } .brief .node.warn rect { stroke:var(--warn); fill:var(--warnbg); }
+.brief .node.soft rect { fill:var(--card); stroke:var(--line); stroke-dasharray:4 3; }
+.brief .node.swap rect { stroke:var(--acc); fill:var(--card); stroke-width:2; } .brief .node.dim2 rect { fill:var(--pendbg); }
+.brief .node text { fill:var(--ink); font-size:14px; text-anchor:middle; } .brief .node text.sub { fill:var(--mute); font-size:11.5px; }
+.brief .edge line, .brief .edge path { stroke:var(--mute); stroke-width:1.6; }
+.brief text.cap { fill:var(--mute); font-size:12px; text-anchor:middle; } .brief text.lab { fill:var(--mute); font-size:12.5px; font-weight:600; }
+.brief rect.bracket { fill:none; stroke:var(--acc); stroke-dasharray:5 4; }
+.brief .stepper { display:grid; grid-template-columns:repeat(4, 1fr); gap:12px; }
+.brief .st { background:var(--soft); border-radius:12px; padding:12px; border-top:4px solid var(--run); display:flex; flex-direction:column; gap:6px; }
+.brief .st b { font-size:15px; } .brief .st span { font-size:13px; } .brief .st em { font-style:normal; font-size:12.5px; background:var(--warnbg); border-radius:6px; padding:4px 6px; }
+.brief .st small { color:var(--mute); font-size:12px; line-height:1.6; }
+.brief table.tl td:first-child { white-space:nowrap; color:var(--mute); width:120px; }
+@media (max-width: 760px) { .brief .cols, .brief .cols.eq, .brief .stepper { grid-template-columns:1fr; } .brief .hero h1 { font-size:21px; } main { padding:14px; } }
 </style>
 </head>
 <body>
 <header>
   <h1>Work 3 · 零数据自博弈搜索智能体</h1>
-  <nav><button id="t-live" class="on">实验进度</button> <button id="t-cur">训练曲线</button> <button id="t-res">研究说明</button></nav>
+  <nav><button id="t-live" class="on">实验进度</button> <button id="t-cur">训练曲线</button> <button id="t-brief">研究说明</button> <button id="t-res">项目记录</button></nav>
   <span class="mute" id="upd"></span>
 </header>
 <main>
@@ -75,6 +160,7 @@ svg { width:100%; height:140px; }
     <div class="card" id="c-reward" hidden><h2>P2 出题奖励日志（每步一次）</h2><div class="charts" id="c-reward-charts"></div></div>
     <div class="card"><h2>GPU 与检索服务历史（看板启动后每 10 秒采样，保留 6 小时）</h2><div class="charts" id="c-hist"></div></div>
   </section>
+  <section id="brief" hidden><article class="brief" id="brief-body">加载中…</article></section>
   <section id="res" hidden></section>
 </main>
 <script>
@@ -86,68 +172,87 @@ const hms = s => { if (s == null) return "—"; s = Math.round(s); const h = Mat
 const pct = x => x == null ? "—" : (x*100).toFixed(1) + "%";
 let openLog = null;
 
-function spark(vals, label) {
-  if (!vals || vals.length < 2) return `<p class="mute">${esc(label)}：数据点不足</p>`;
-  const W = 600, H = 120, lo = Math.min(...vals), hi = Math.max(...vals), span = (hi - lo) || 1;
-  const pts = vals.map((v, i) => `${(i/(vals.length-1)*W).toFixed(1)},${(H - (v-lo)/span*(H-10) - 5).toFixed(1)}`).join(" ");
-  return `<div class="mute">${esc(label)}（${vals.length} 点，最小 ${lo.toFixed(3)}，最大 ${hi.toFixed(3)}，最新 ${vals[vals.length-1].toFixed(3)}）</div>
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polyline fill="none" stroke="currentColor" stroke-width="2" points="${pts}" style="color:var(--run)"/></svg>`;
+const clock = t => { const d = new Date(t * 1000); return `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+const ICON = {done: "✓", running: "⟳", failed: "✗", stalled: "⚠", pending: "○"};
+
+function roadmapCard(rm) {
+  if (!rm) return "";
+  return `<div class="card"><h2>研究路线</h2><div class="road">` + rm.map((p, i) => `
+    <div class="ph ${p.state}"><div class="dot">${ICON[p.state] || "○"}</div>
+      <div class="pt">${esc(p.title)}</div><div class="ps ${p.state}">${esc(p.status)}</div>
+      <div class="pw">${esc(p.what)}</div>
+      ${p.result ? `<div class="pr">${esc(p.result)}</div>` : ""}
+      <div class="pg" title="冻结门槛">${esc(p.gate)}</div></div>`).join("") + `</div></div>`;
 }
 
-function gpuCard(g) {
+function gpuStrip(g) {
   if (!g) return `<div class="card"><h2>GPU</h2><p class="mute">nvidia-smi 不可用</p></div>`;
-  return `<div class="card"><h2>GPU</h2><table><tr><th>卡</th><th>利用率</th><th>显存</th><th>功率</th></tr>` +
-    g.map(x => `<tr><td>${esc(x.index)} ${esc(x.name)}</td><td>${x.util ?? "—"}%</td>
-      <td>${x.mem_used != null ? (x.mem_used/1024).toFixed(1) : "—"} / ${x.mem_total != null ? (x.mem_total/1024).toFixed(0) : "—"} GB</td>
-      <td>${x.power ?? "—"} / ${x.power_limit ?? "—"} W</td></tr>`).join("") +
-    `</table><p class="mute">参考：反向传播阶段约 450–560 W、利用率 90% 以上属正常；rollout 尾段（少数长轨迹在等检索和多轮生成）功率掉到 100–150 W、利用率接近 0 是预期现象。如果 rollout 前半段（并发多的时候）利用率也长时间低于 30%，说明并发不足，请反馈。</p></div>`;
+  const meter = (v, max, cls) => `<div class="meter ${cls}"><i style="width:${Math.min(100, (v ?? 0) / (max || 1) * 100).toFixed(1)}%"></i></div>`;
+  return `<div class="card"><h2>GPU <span class="mute">（每 8 秒刷新；历史曲线见“训练曲线”页）</span></h2><div class="gpus">` + g.map(x => `
+    <div class="gpu"><b>GPU ${esc(x.index)}</b> <span class="mute">${esc(x.name)}</span>
+      <div class="gl"><span>利用率</span>${meter(x.util, 100, "u")}<em>${x.util ?? "—"}%</em></div>
+      <div class="gl"><span>功率</span>${meter(x.power, x.power_limit, "p")}<em>${x.power != null ? Math.round(x.power) : "—"} / ${x.power_limit != null ? Math.round(x.power_limit) : "—"} W</em></div>
+      <div class="gl"><span>显存</span>${meter(x.mem_used, x.mem_total, "m")}<em>${x.mem_used != null ? (x.mem_used / 1024).toFixed(0) : "—"} / ${x.mem_total != null ? (x.mem_total / 1024).toFixed(0) : "—"} GB</em></div>
+    </div>`).join("") + `</div>
+    <p class="mute small">怎么看：反向传播时 450–560 W、利用率 90% 以上属正常；rollout 尾段只剩少数长轨迹在“生成→检索”间等待，功率 100–150 W、利用率接近 0 也属正常。如果 rollout 前段利用率也长期低于 30%，请反馈。</p></div>`;
+}
+
+function lanesHtml(r) {
+  return `<div class="lanes">` + r.lanes.map(l => {
+    const total = l.segments.reduce((a, s) => a + Math.max(s.est_seconds, 1), 0);
+    return `<div class="lane"><div class="ll">${esc(l.label)}</div><div class="lbar">` + l.segments.map(s => {
+      const w = Math.max(14, s.est_seconds / total * 100);
+      const fill = s.state === "done" ? 100 : (s.state === "pending" ? 0 : Math.max(3, s.fraction * 100));
+      const em = s.em != null ? `<b class="em ${s.em >= r.threshold ? "good" : ""}">EM ${s.em.toFixed(3)}</b>` : "";
+      const tip = `${s.label}：${({done: "已完成", running: "进行中", stalled: "长时间无输出", failed: "失败", pending: "待运行"})[s.state]}` +
+        (s.seconds ? `，用时 ${hms(s.seconds)}` : `，预计 ${hms(s.est_seconds)}`);
+      return `<div class="seg ${s.state}" style="flex:${w}" title="${esc(tip)}"><div class="segfill" style="width:${fill.toFixed(1)}%"></div>
+        <div class="segl">${ICON[s.state]} ${esc(s.label)}${s.state === "running" ? " " + Math.round(s.fraction * 100) + "%" : ""} ${em}</div></div>`;
+    }).join("") + `</div></div>`;
+  }).join("") + `</div>`;
+}
+
+function nowBox(r) {
+  const c = r.current;
+  if (!c) {
+    if (r.stages.every(s => s.state === "done")) return `<div class="now done"><b>全部完成。</b></div>`;
+    return `<div class="now idle">当前没有正在运行的步骤${r.started ? "（可能在两个命令之间，或已手动停止）" : "，尚未开始"}。</div>`;
+  }
+  let h = `<div class="now ${c.state}"><div class="nt">${ICON[c.state]} 正在进行：<b>${esc(c.label)}</b>` +
+    (c.state === "stalled" ? ` <span class="ps stalled">日志 ${hms(c.idle_seconds)} 没有更新，请检查</span>` :
+     c.idle_seconds != null ? ` <span class="mute">日志 ${hms(c.idle_seconds)} 前更新</span>` : "") + `</div>`;
+  if (c.explain) h += `<div class="nx">${esc(c.explain)}</div>`;
+  if (c.fraction != null) h += `<div class="nb"><span>本步骤进度</span><div class="bar"><i style="width:${(c.fraction * 100).toFixed(1)}%"></i></div><em>${Math.round(c.fraction * 100)}%${c.steps_total ? `（训练第 ${c.steps_done} / ${c.steps_total} 步）` : "（按耗时估计）"}</em></div>`;
+  const ro = Object.entries(c.bars || {}).find(([k]) => /Rollout/.test(k));
+  if (ro) h += `<div class="nb"><span>本步内采样</span><div class="bar thin"><i style="width:${ro[1].pct}%"></i></div><em>${ro[1].n} / ${ro[1].total}　${esc(ro[1].info)}</em></div>`;
+  const ls = c.last_step;
+  if (ls && ls["critic/score/mean"] != null) h += `<div class="mute small">最近一步：平均得分 ${fmt(ls["critic/score/mean"])}${ls["timing_s/step"] != null ? `，每步 ${hms(ls["timing_s/step"])}` : ""}${ls["response_length/mean"] != null ? `，平均回答长度 ${Math.round(ls["response_length/mean"])} token` : ""}</div>`;
+  return h + `</div>`;
 }
 
 function runCard(r) {
   if (!r.exists) return "";
-  const cur = r.current;
-  let h = `<div class="card"><h2>${esc(r.title)} <span class="mute">${esc(r.dir)}</span></h2>`;
-  h += `<div class="stages">` + r.stages.map(s => `<span class="stage ${s.state}" title="${esc(s.name)}">${esc(STATE[s.state].split(" ")[0])} ${esc(s.label)}${s.seconds ? " · " + hms(s.seconds) : ""}</span>`).join("") + `</div>`;
-  if (cur) {
-    h += `<p><b>当前：</b>${esc(cur.label)} <span class="pill ${cur.state}">${STATE[cur.state]}</span>` +
-         (cur.idle_seconds != null ? ` <span class="mute">日志 ${hms(cur.idle_seconds)} 前更新</span>` : "") + `</p>`;
-    if (cur.fraction != null) h += `<div class="mute">训练步数进度 ${pct(cur.fraction)}</div><div class="bar"><i style="width:${(cur.fraction*100).toFixed(1)}%"></i></div>`;
-    for (const [k, b] of Object.entries(cur.bars || {})) {
-      h += `<div class="mute">${esc(k)}：${b.n}/${b.total}（${b.pct}%）${esc(b.info)}</div><div class="bar"><i style="width:${b.pct}%"></i></div>`;
-    }
-    if (cur.last_step) h += `<div class="mute">最近一步：` + Object.entries(cur.last_step).map(([k,v]) => `${esc(k)}=${typeof v === "number" ? +v.toFixed(4) : esc(v)}`).join("，") + `</div>`;
-  } else if (r.stages.every(s => s.state === "done")) {
-    h += `<p class="done">全部阶段已完成。</p>`;
-  } else {
-    h += `<p class="mute">没有正在运行的阶段。</p>`;
+  const pctAll = Math.round(r.overall_fraction * 100);
+  let h = `<div class="card run"><div class="rh"><h2>${esc(r.title)}</h2>`;
+  if (r.summary) { const v = r.summary.verdict; h += `<span class="ps ${v === "PASS" || v === "GO" ? "done" : v === "INVALID" ? "stalled" : "failed"}">判定：${esc(v)}</span>`; }
+  h += `</div><div class="overall"><div class="bar big"><i style="width:${pctAll}%"></i></div><div class="ov"><b>${pctAll}%</b>` +
+       (r.started && r.eta_seconds > 0 ? `<span>还需约 <b>${hms(r.eta_seconds)}</b>，预计 <b>${clock(r.finish_at)}</b> 完成</span>` : r.started ? `<span>已完成</span>` : `<span>尚未开始</span>`) +
+       `<span class="mute small">按已完成步骤的实测耗时估计</span></div></div>`;
+  h += nowBox(r) + lanesHtml(r);
+  if (r.kind === "p0" && r.evals && Object.keys(r.evals).length) {
+    h += `<div class="emrow">` + Object.entries(r.evals).map(([t, e]) => `<div class="emc"><span>${t === "0" ? "基座模型" : "第 " + t + " 轮"}</span><b>${e && e.average != null ? e.average.toFixed(3) : "—"}</b><em>论文 ${({"0": "—", "1": "0.304", "2": "0.319", "3": "0.326"})[t]}</em></div>`).join("") +
+         `<div class="emc gate"><span>P0 门槛（第 3 轮）</span><b>≥ ${r.threshold}</b><em>论文 0.326 − 2 pp</em></div></div>`;
   }
-  h += `<p>预计剩余：<b>${hms(r.eta_seconds)}</b> <span class="mute">（已完成阶段按实测耗时，未跑过的阶段按指导估计）</span></p>`;
-  if (r.kind === "p0") {
-    const ev = Object.entries(r.evals || {});
-    if (ev.length) {
-      h += `<table><tr><th>评测</th><th>7 数据集平均 EM</th><th>说明</th></tr>` + ev.map(([t, e]) =>
-        `<tr><td>${t === "0" ? "基座" : "第 " + t + " 轮"}</td><td class="big">${e && e.average != null ? e.average.toFixed(4) : "—"}</td>
-         <td>${t === "3" && e && e.average != null ? (e.average >= r.threshold ? `<span class="done">≥ 门槛 ${r.threshold}</span>` : `<span class="failed">< 门槛 ${r.threshold}</span>`) : ""}${e && e.problems && e.problems.length ? esc(e.problems.join("; ")) : ""}</td></tr>`).join("") + `</table>`;
-    } else h += `<p class="mute">P0 门槛：第 3 轮 7 数据集平均 EM ≥ ${r.threshold}（论文 0.326）。评测完成后在此显示。</p>`;
-  }
-  if (r.summary) h += `<p>汇总判定：<span class="pill ${r.summary.verdict === "PASS" || r.summary.verdict === "GO" ? "done" : (r.summary.verdict === "INVALID" ? "stalled" : "failed")}">${esc(r.summary.verdict)}</span> ${esc((r.summary.problems || []).join("; "))}</p>`;
-  const pc = Object.entries(r.pool_checks || {});
-  if (pc.length) h += `<p class="mute">题池检查：` + pc.map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "✗"}`).join("，") + `</p>`;
-  if (r.retriever) { const q = r.retriever;
-    h += `<p class="mute">检索服务（近 ${q.window_seconds}s）：${q.requests_per_second} 次/秒，p50 ${q.p50_ms ?? "—"} ms，p95 ${q.p95_ms ?? "—"} ms，进行中 ${q.in_flight}，错误 ${q.errors_in_window}（累计 ${q.total_requests} 次）</p>`; }
-  if (r.curves && r.curves.stage) {
-    h += `<details open><summary>训练曲线 · ${esc(r.curves.stage)}</summary>`;
-    if (r.curves.reward && r.curves.reward.length) h += spark(r.curves.reward, "出题者奖励（每步 Final rewards Avg）");
-    const sc = (r.curves.steps || []).map(x => x["critic/score/mean"]).filter(x => x != null);
-    if (sc.length) h += spark(sc, "critic/score/mean（每步）");
-    h += `</details>`;
-  }
-  const e = r.errors;
-  const uf = Object.entries(e.undefined_function_names || {}).map(([k,v]) => `${esc(k)}×${v}`).join("，");
-  h += `<p>告警：Traceback ${e.traceback}，FAILED ${e.failed}，显存不足 ${e.oom}，无效工具名 ${e.undefined_function}${uf ? "（" + uf + "）" : ""}</p>`;
+  const e = r.errors, uf = Object.entries(e.undefined_function_names || {}).map(([k, v]) => `${esc(k)}×${v}`).join("，");
+  const warn = e.traceback + e.failed + e.oom;
+  h += `<details><summary>详情：全部子步骤、检索服务、告警（${warn ? `<span class="failed">${warn} 条</span>` : "无"}）、最新日志</summary>`;
+  h += `<table class="small"><tr><th>子步骤</th><th>状态</th><th>用时 / 预计</th></tr>` + r.stages.map(s => `<tr><td>${esc(s.label)} <span class="mute">${esc(s.name)}</span></td><td class="${s.state}">${ICON[s.state]} ${({done: "完成", running: "进行中", stalled: "无输出", failed: "失败", pending: "待运行"})[s.state]}</td><td>${s.seconds ? hms(s.seconds) : "预计 " + hms(s.est_seconds)}</td></tr>`).join("") + `</table>`;
+  if (r.retriever) { const q = r.retriever; h += `<p class="small">检索服务（近 ${q.window_seconds}s）：${q.requests_per_second} 次/秒，p50 ${q.p50_ms ?? "—"} ms，p95 ${q.p95_ms ?? "—"} ms，进行中 ${q.in_flight}，错误 ${q.errors_in_window}</p>`; }
+  const pc = Object.entries(r.pool_checks || {}); if (pc.length) h += `<p class="small">题池检查：` + pc.map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "✗"}`).join("，") + `</p>`;
+  h += `<p class="small">告警：Traceback ${e.traceback}，FAILED ${e.failed}，显存不足 ${e.oom}，工具名写错 ${e.undefined_function}${uf ? "（" + uf + "）" : ""}</p>`;
   if (e.last_lines && e.last_lines.length) h += `<pre>${esc(e.last_lines.join("\n"))}</pre>`;
   h += `<details ${openLog === r.id ? "open" : ""} data-log="${esc(r.id)}"><summary>最新日志（最后 80 行）</summary><pre id="log-${esc(r.id)}">点开后加载…</pre></details>`;
-  return h + `</div>`;
+  return h + `</details></div>`;
 }
 
 async function refreshLog(id) {
@@ -158,11 +263,13 @@ async function refreshLog(id) {
 async function tick() {
   try {
     const s = await (await fetch("/api/state")).json();
-    let h = gpuCard(s.gpus);
-    if (s.p2) h += `<div class="card"><h2>P2 判定</h2><span class="pill ${s.p2.verdict === "GO" ? "done" : "failed"}">${esc(s.p2.verdict)}</span><pre>${esc(JSON.stringify(s.p2.primary || s.p2.problems, null, 2))}</pre></div>`;
-    const shown = s.runs.filter(r => r.exists);
+    const keepOpen = [...document.querySelectorAll("#live details[open]")].map(d => d.querySelector("summary").textContent);
+    let h = roadmapCard(s.roadmap);
+    const shown = s.runs.filter(r => r.exists && (r.started || r.id === "p0"));
     h += shown.length ? shown.map(runCard).join("") : `<div class="card mute">还没有找到运行目录。请设置 DRZERO_DIR（以及 P2 的 ARM_ROOT）后重启看板。</div>`;
+    h += gpuStrip(s.gpus);
     $("#live").innerHTML = h;
+    document.querySelectorAll("#live details").forEach(d => { if (keepOpen.includes(d.querySelector("summary").textContent)) d.open = true; });
     document.querySelectorAll("details[data-log]").forEach(d => {
       d.addEventListener("toggle", () => { if (d.open) { openLog = d.dataset.log; refreshLog(openLog); } else if (openLog === d.dataset.log) openLog = null; });
     });
@@ -171,13 +278,17 @@ async function tick() {
   } catch (e) { $("#upd").textContent = "读取失败：" + e; }
 }
 
+async function loadBriefing() {
+  const html = await (await fetch("/api/briefing")).text();
+  $("#brief-body").innerHTML = html;
+}
+
 async function loadResearch() {
   const r = await (await fetch("/api/research")).json();
   const st = r.state || {};
   const kv = (o) => `<table>` + Object.entries(o || {}).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(typeof v === "object" ? JSON.stringify(v, null, 1) : v)}</td></tr>`).join("") + `</table>`;
   $("#res").innerHTML =
-    `<div class="card"><h2>当前阶段与下一步（research/STATE.json）</h2>${kv({current_stage: st.current_stage, status: st.status, next_action: st.next_action, updated_at: st.updated_at})}</div>` +
-    `<div class="card"><h2>目标会议</h2>${kv(st.target_venue)}</div>` +
+    `<div class="card"><h2>当前状态与下一步（research/STATE.json）</h2>${kv({当前阶段: st.current_stage, 状态: st.status, 下一步: st.next_action, 更新: st.updated_at})}</div>` +
     `<div class="card"><h2>已冻结的门槛</h2>${kv(st.frozen_gates)}</div>` +
     `<div class="card"><h2>实验计划（research/EXPERIMENT_PLAN.md）</h2>${r.plan_html}</div>` +
     `<div class="card"><h2>决策记录（research/DECISION_LOG.md，新的在前）</h2>` +
@@ -356,14 +467,15 @@ $("#c-time").onclick = () => setKeys(k => /^(timing_s|perf)\//.test(k));
 $("#c-none").onclick = () => setKeys(() => false);
 
 function show(which) {
-  for (const w of ["live", "cur", "res"]) { $("#" + w).hidden = w !== which; $("#t-" + w).classList.toggle("on", w === which); }
+  for (const w of ["live", "cur", "brief", "res"]) { $("#" + w).hidden = w !== which; $("#t-" + w).classList.toggle("on", w === which); }
   if (which === "res") loadResearch();
+  if (which === "brief") loadBriefing();
   if (which === "cur") { (cur.loaded ? curLoad() : curInit()); loadHistory(); }
+  try { history.replaceState(null, "", "#" + which); } catch (e) {}
 }
-$("#t-live").onclick = () => show("live");
-$("#t-cur").onclick = () => show("cur");
-$("#t-res").onclick = () => show("res");
+for (const w of ["live", "cur", "brief", "res"]) $("#t-" + w).onclick = () => show(w);
 tick(); setInterval(tick, 8000);
+if (["cur", "brief", "res"].includes(location.hash.slice(1))) show(location.hash.slice(1));
 setInterval(() => { if (!$("#cur").hidden) { curLoad(); loadHistory(); } }, 15000);
 </script>
 </body>

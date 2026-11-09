@@ -182,3 +182,37 @@ Run scripts are byte-identical to the r2 tags, so switching tags mid-run is
 safe. No gate, protocol or experiment setting changed.
 
 Decision: `BOARD_TRAINING_CURVES_R3`.
+
+## 2026-11-09: Board redesign for clarity (tags `p0-r4`, `p1-r4`, `p2-r4`)
+
+The user found the board too crude: P0 showed 22 flat stage chips, and the
+research page only dumped project files. They asked for an intuitive progress
+view and a research explanation clear enough to present to the advisor.
+
+Progress tab:
+
+- a research roadmap (P0 → P1 → P2 → main experiments → submission) with
+  status, frozen gate and key result for each phase;
+- one overall progress bar per run, with the remaining time and the expected
+  finish clock time;
+- a plain-language "now running" box showing the within-iteration step count;
+- one lane per iteration with four segments (proposer training, question pool,
+  solver training, evaluation), sized by duration and showing EM on the
+  evaluation segment;
+- raw stages, retriever, alerts and logs moved into a collapsible section.
+
+New 研究说明 page served from `research/briefing.html`, a curated
+advisor-level briefing:
+
+- background, the problem and the evidence (Dr. Zero Table 3);
+- the variance decomposition, the same-prefix replay and NCP, with two
+  diagrams and an illustrative reward table;
+- how it differs from related work;
+- the staged design with gates;
+- contributions, risks and timeline.
+
+The previous file dump is now 项目记录.
+
+Run scripts are unchanged since r2, so switching tags is safe while P0 runs.
+
+Decision: `BOARD_REDESIGN_R4`.
