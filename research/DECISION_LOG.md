@@ -343,3 +343,25 @@ The board, at the user's request, now shows:
 Recorded in P0 addendum 2026-11-10 (b).
 
 Decision: `OOM2_MICROBATCH_R8`.
+
+## 2026-11-10: Step ETA on the board's current-stage card (tags `p0-r9`, `p1-r9`, `p2-r9`)
+
+The user saw only a percentage in the board's "正在进行" card. The r8 ETA line
+was separate from the progress bar. It also needs the board backend restarted,
+since the page reloads but the backend does not.
+
+The remaining time and finish clock now sit directly under the step progress
+bar, and the sampling bar shows its own remaining time. The source depends on
+what is available:
+
+1. the mean of the latest five step times;
+2. otherwise the progress bar's own rate (tqdm), which also covers
+   question-pool generation;
+3. otherwise the stage's typical duration.
+
+The page falls back to tqdm's text when an older backend lacks the field. The
+guide now says to restart the board after updating.
+
+Board only; run scripts identical to r8.
+
+Decision: `BOARD_STEP_ETA_R9`.

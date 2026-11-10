@@ -71,6 +71,45 @@ class ParseTest(unittest.TestCase):
         e = B.scan_errors(CHALLENGER_LOG)
         self.assertEqual((e["undefined_function"], e["undefined_function_names"]), (3, {"query": 2, "answer": 1}))
 
+    def test_tqdm_times(self):
+        self.assertEqual(B.tqdm_seconds("45"), 45)
+        self.assertEqual(B.tqdm_seconds("01:10"), 70)
+        self.assertEqual(B.tqdm_seconds("4:23:56"), 4 * 3600 + 23 * 60 + 56)
+        self.assertEqual(B.tqdm_seconds("1 day, 2:03:04"), 86400 + 2 * 3600 + 3 * 60 + 4)
+        self.assertIsNone(B.tqdm_seconds("?"))
+        bars = B.tqdm_progress("Training Progress:  32%|###| 16/50 [1:48:53<4:23:56, 452.46s/it]")
+        self.assertEqual((bars["Training Progress"]["elapsed_s"], bars["Training Progress"]["remaining_s"]),
+                         (6533, 15836))
+        self.assertNotIn("remaining_s", B.tqdm_progress(" 50%|##| 5/10")["progress"])
+
+    def test_eta_from_progress_bar_without_step_metrics(self):
+        with tempfile.TemporaryDirectory() as d:
+            run = Path(d) / "work3_p0"; (run / "logs").mkdir(parents=True)
+            now = int(time.time())
+            (run / "logs" / "prepare_train.log").write_text("ok\n")
+            os.utime(run / "logs" / "prepare_train.log", (now - 999, now - 999))
+            (run / "timings.txt").write_text(f"prepare_train 5 0 {now - 900}\nprepare_test 5 0 {now - 900}\n"
+                                             f"prepare_val 5 0 {now - 900}\n")
+            os.utime(run / "timings.txt", (now - 900, now - 900))
+            # proposer just resumed: progress bar but no finished step yet
+            (run / "logs" / "iter1_challenger.log").write_text(
+                "Training Progress:  42%|####| 21/50 [05:00<2:00:00, 300s/it]\r")
+            st = B.run_status("p0", "P0", run, B.P0_STAGES, "p0", time.time())
+            c = st["current"]
+            self.assertEqual((c["steps_done"], c["steps_total"]), (21, 50))
+            self.assertEqual(c["stage_remaining_seconds"], 7200)
+            self.assertIn("进度条", c["eta_basis"])
+            # question-pool generation: generic bar, no training bar
+            (run / "logs" / "iter1_challenger.log").unlink()
+            with (run / "timings.txt").open("a") as f:
+                f.write(f"iter1_challenger 3600 0 {now - 800}\n")
+            (run / "logs" / "iter1_gen_data.log").write_text(" 25%|##| 17/67 [30:00<1:30:00, 106s/it]\r")
+            st = B.run_status("p0", "P0", run, B.P0_STAGES, "p0", time.time())
+            c = st["current"]
+            self.assertEqual(c["stage"], "iter1_gen_data")
+            self.assertAlmostEqual(c["fraction"], 17 / 67)
+            self.assertEqual(c["stage_remaining_seconds"], 5400)
+
     def test_training_fraction_handles_resumed_proposer(self):
         self.assertAlmostEqual(B.training_fraction("iter2_challenger", {"n": 75, "total": 100}), 0.5)
         self.assertAlmostEqual(B.training_fraction("iter1_solver", {"n": 10, "total": 50}), 0.2)

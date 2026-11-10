@@ -1,6 +1,6 @@
 # P0 厂内指导：复现 Dr. Zero Qwen2.5-3B（4×H800）
 
-版本：tag `p0-r8`（2026-11-10：处理厂内反馈 #6——训练侧微批次 2→1 根治第 30 步的 OOM；看板加每个阶段、每一轮、P0/P1/P2 的预计时间）。
+版本：tag `p0-r9`（2026-11-10：看板“正在进行”卡片在本步骤进度旁直接显示预计还需多久、几点完成；训练脚本与 p0-r8 完全相同）。
 协议（已冻结，不要改）：[research/protocols/P0_drzero_reproduction.md](../../research/protocols/P0_drzero_reproduction.md)，执行以末尾各节 **Addendum** 为准。
 判定：第 3 轮 7 个数据集平均 EM ≥ **0.306** 为 PASS（论文 0.326）。
 
@@ -15,7 +15,7 @@
 ```bash
 cd <工作目录>/work3
 cp $DRZERO_DIR/work3_p0/logs/iter1_challenger.log $DRZERO_DIR/work3_p0/logs/iter1_challenger.oom_step30.log   # 留档
-git fetch --tags && git checkout p0-r8
+git fetch --tags && git checkout p0-r9
 bash $P0 check
 bash $P0 patch     # 日志里应有 "... proposer rollout memory 0.25; micro-batch 1"
 bash $P0 iter1     # 自动从 global_step_20 继续（第 21 步起），之后依次跑题池、解题者……
@@ -125,6 +125,8 @@ bash $P0 gate       # 写 work3_p0/p0_summary.json
 DRZERO_DIR=<工作目录>/drzero BOARD_PYTHON=$(which python) bash <工作目录>/work3/scripts/run_board.sh
 # 浏览器打开 http://127.0.0.1:8766/ ；在别的机器上看：ssh -L 8766:127.0.0.1:8766 <厂内机器>
 ```
+
+**更新看板版本后必须重启看板服务**（Ctrl-C 后重新运行上面的命令）：页面文件每次刷新都会重新读取，但后端是启动时加载的，不重启就看不到新字段。不过新版页面在后端是旧版本时也会自己算出“本步骤预计还需多久”。
 
 看板是只读服务：所有内容都从运行目录和仓库文件读取，不写任何东西，每 8 秒刷新一次。页面分四块：
 

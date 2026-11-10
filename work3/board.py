@@ -101,13 +101,33 @@ def parse_timings(path: Path) -> Dict[str, dict]:
     return out
 
 
+def tqdm_seconds(s: str) -> Optional[int]:
+    """'45' / '01:10' / '4:23:56' / '1 day, 2:03:04' -> seconds (tqdm's elapsed / remaining)."""
+    s = s.strip()
+    days = 0
+    m = re.match(r"(\d+)\s+days?,\s*(.*)", s)
+    if m:
+        days, s = int(m.group(1)), m.group(2)
+    parts = s.split(":")
+    if not s or not all(p.strip().isdigit() for p in parts) or len(parts) > 3:
+        return None
+    sec = 0
+    for p in parts:
+        sec = sec * 60 + int(p)
+    return days * 86400 + sec
+
+
 def tqdm_progress(text: str) -> Dict[str, dict]:
-    """Latest progress per bar description."""
+    """Latest progress per bar description, with tqdm's own elapsed / remaining when printed."""
     bars: Dict[str, dict] = {}
     for m in TQDM.finditer(text):
         desc = (m.group("desc") or "").strip() or "progress"
-        bars[desc] = {"n": int(m.group("n")), "total": int(m.group("total")),
-                      "pct": int(m.group("pct")), "info": (m.group("info") or "").strip()}
+        info = (m.group("info") or "").strip()
+        bar = {"n": int(m.group("n")), "total": int(m.group("total")), "pct": int(m.group("pct")), "info": info}
+        t = re.match(r"([^<,]+)<([^,]+)", info)              # "elapsed<remaining, rate"
+        if t:
+            bar["elapsed_s"], bar["remaining_s"] = tqdm_seconds(t.group(1)), tqdm_seconds(t.group(2))
+        bars[desc] = bar
     return bars
 
 
@@ -569,15 +589,31 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
                 mm = re.match(r"iter(\d)_challenger$", r["name"])
                 base = 50 * (int(mm.group(1)) - 1) if mm else 0
                 current["steps_done"], current["steps_total"] = max(0, bar["n"] - base), max(0, bar["total"] - base)
-            if frac is None and last_end:                      # no step bar: elapsed since previous stage ended
+            # Non-training stages with their own progress bar (e.g. question-pool generation):
+            # use that bar's fraction and tqdm's remaining time.
+            other = None
+            if frac is None:
+                cands = [b for k, b in current["bars"].items()
+                         if not re.search(r"Rollout|Training Progress", k) and b.get("total")]
+                other = max(cands, key=lambda b: b["total"]) if cands else None
+                if other:
+                    frac = other["n"] / other["total"]
+            if frac is None and last_end:                      # no bar at all: elapsed since previous stage ended
                 frac = min(0.95, max(0.0, (now - last_end) / r["est_seconds"]))
+                current["eta_basis"] = "按这类步骤的典型耗时估计（暂无进度条）"
             # Steps get slower as the proposer improves (more valid questions to score), so the
-            # remaining time of a training stage uses the mean of its latest five step times.
+            # remaining time of a training stage uses the mean of its latest five step times;
+            # before any step has finished it falls back to tqdm's own estimate.
             recent = [s["timing_s/step"] for s in current.pop("_steps", []) if "timing_s/step" in s][-5:]
             if recent and current.get("steps_total") and frac is not None and frac < 1:
                 left = (current["steps_total"] - current["steps_done"]) * sum(recent) / len(recent)
                 r["est_seconds"] = left / (1 - frac)
-                current["eta_basis"] = f"按最近 {len(recent)} 步平均 {round(sum(recent) / len(recent))} 秒/步"
+                current["eta_basis"] = f"按最近 {len(recent)} 步平均 {round(sum(recent) / len(recent))} 秒/步估计"
+            else:
+                src = bar if bar and bar.get("remaining_s") is not None else other
+                if src and src.get("remaining_s") is not None and frac is not None and frac < 1:
+                    r["est_seconds"] = src["remaining_s"] / (1 - frac)
+                    current["eta_basis"] = "按进度条的当前速度估计"
             current["fraction"] = frac
             current["elapsed_seconds"] = round(now - last_end) if last_end else None
             r["fraction"] = frac or 0.0

@@ -29,7 +29,7 @@
   "upstreams": {
     "drzero": "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
   },
-  "p0_release": "p0-r8",
-  "p1_release": "p1-r8",
-  "p2_release": "p2-r8"
+  "p0_release": "p0-r9",
+  "p1_release": "p1-r9",
+  "p2_release": "p2-r9"
 }
