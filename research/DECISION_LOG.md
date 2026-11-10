@@ -315,3 +315,31 @@ Fixes in r7:
 Training path unchanged: patch output is identical to r6.
 
 Decision: `SPEED_REVIEW_R7`.
+
+## 2026-11-10: Second proposer OOM (step 30); micro-batch 1 and stage ETAs (tags `p0-r8`, `p1-r8`, `p2-r8`)
+
+The iteration-1 proposer under p0-r7 hit OOM in the actor backward pass at
+step 30. This was not the static SGLang reservation fixed in r6. It was the
+training-side peak, which grew from 42 GB to 59 GB as proposer responses
+lengthened (rewards 0.128 → 0.532). Checkpointing every 10 steps kept
+`global_step_20`.
+
+Fix: the actor-update and log-prob micro-batch goes 2 → 1. Same mini-batch and
+optimiser steps; half the tokens per pass, so half the length-dependent peak.
+The cost is negligible, since the update is about 5% of a step. The bound
+holds for iterations 2–3 because sequence length is capped.
+
+Rejected: CPU retrieval (a flat CPU index scans about 64 GB per query under
+bursty load). `expandable_segments` is an opt-in fallback only.
+
+The board, at the user's request, now shows:
+
+- the current stage's remaining time and finish clock;
+- per-segment and per-iteration totals (done and remaining);
+- per-phase P0 / P1 / P2 remaining time, with P2 arms estimated from P0's
+  measured stage times;
+- a warning when any GPU exceeds 93% memory.
+
+Recorded in P0 addendum 2026-11-10 (b).
+
+Decision: `OOM2_MICROBATCH_R8`.

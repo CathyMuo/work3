@@ -57,14 +57,19 @@ details { border-top:1px solid var(--line); padding:8px 0 2px; margin-top:10px; 
 .nt { font-size:15px; } .nx { color:var(--mute); margin:4px 0 8px; font-size:13px; }
 .nb { display:flex; align-items:center; gap:10px; margin:6px 0; } .nb > span { width:84px; color:var(--mute); font-size:12.5px; } .nb > em { font-style:normal; font-size:12.5px; min-width:150px; }
 .lanes { display:flex; flex-direction:column; gap:8px; }
-.lane { display:grid; grid-template-columns:64px 1fr; align-items:center; gap:10px; }
+.lane { display:grid; grid-template-columns:64px 1fr 210px; align-items:center; gap:10px; }
+.lsum { font-size:12px; color:var(--mute); } .lsum b { color:var(--ink); }
+.segd { position:relative; padding:0 8px; font-size:11px; color:var(--mute); line-height:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.neta { font-size:14px; margin:4px 0 2px; }
+.ptime { font-size:12.5px; margin-top:3px; color:var(--mute); } .ptime.running { color:var(--run); font-weight:600; } .ptime.done { color:var(--ok); }
+.gpu.hot { outline:2px solid var(--bad); }
 .ll { font-weight:650; font-size:13px; color:var(--mute); text-align:right; }
 .lbar { display:flex; gap:4px; }
-.seg { position:relative; height:42px; border-radius:8px; background:var(--pendbg); overflow:hidden; min-width:0; border:1px solid transparent; }
+.seg { position:relative; height:50px; border-radius:8px; background:var(--pendbg); overflow:hidden; min-width:0; border:1px solid transparent; }
 .seg.running { border-color:var(--run); } .seg.stalled { border-color:var(--warn); } .seg.failed { border-color:var(--bad); background:var(--badbg); }
 .segfill { position:absolute; inset:0 auto 0 0; background:var(--okbg); }
 .seg.running .segfill, .seg.stalled .segfill { background:repeating-linear-gradient(45deg, var(--runbg), var(--runbg) 8px, rgba(36,89,214,.18) 8px, rgba(36,89,214,.18) 16px); }
-.segl { position:relative; padding:0 8px; line-height:40px; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.segl { position:relative; padding:0 8px; line-height:30px; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .seg.done .segl { color:var(--ok); } .seg.running .segl { color:var(--run); font-weight:600; } .seg.pending .segl { color:var(--mute); }
 .em { margin-left:6px; color:var(--ink); } .em.good { color:var(--ok); }
 .emrow { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
@@ -172,14 +177,23 @@ const hms = s => { if (s == null) return "—"; s = Math.round(s); const h = Mat
 const pct = x => x == null ? "—" : (x*100).toFixed(1) + "%";
 let openLog = null;
 
+const hshort = s => { if (s == null) return "—"; s = Math.max(0, Math.round(s)); if (s < 30) return "0"; return s >= 3600 ? (s / 3600).toFixed(1) + " 小时" : Math.max(1, Math.round(s / 60)) + " 分"; };
 const clock = t => { const d = new Date(t * 1000); return `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const ICON = {done: "✓", running: "⟳", failed: "✗", stalled: "⚠", pending: "○"};
 
-function roadmapCard(rm) {
+const days = s => s >= 86400 ? `（约 ${(s / 86400).toFixed(1)} 天）` : "";
+function phaseTime(p) {
+  if (p.est_seconds == null) return "";
+  if (p.remaining_seconds === 0) return `<div class="ptime done">已完成</div>`;
+  if (p.state === "running") return `<div class="ptime running">还需约 ${hms(p.remaining_seconds)}</div>`;
+  return `<div class="ptime">预计需 ${hms(p.remaining_seconds)}</div>`;
+}
+function roadmapCard(rm, left) {
   if (!rm) return "";
-  return `<div class="card"><h2>研究路线</h2><div class="road">` + rm.map((p, i) => `
+  return `<div class="card"><h2>研究路线 ${left ? `<span class="mute small">P0–P2 合计还需约 <b>${hms(left)}</b>${days(left)}，按各阶段实测或指导估计</span>` : ""}</h2><div class="road">` + rm.map((p, i) => `
     <div class="ph ${p.state}"><div class="dot">${ICON[p.state] || "○"}</div>
       <div class="pt">${esc(p.title)}</div><div class="ps ${p.state}">${esc(p.status)}</div>
+      ${phaseTime(p)}
       <div class="pw">${esc(p.what)}</div>
       ${p.result ? `<div class="pr">${esc(p.result)}</div>` : ""}
       <div class="pg" title="冻结门槛">${esc(p.gate)}</div></div>`).join("") + `</div></div>`;
@@ -188,8 +202,11 @@ function roadmapCard(rm) {
 function gpuStrip(g) {
   if (!g) return `<div class="card"><h2>GPU</h2><p class="mute">nvidia-smi 不可用</p></div>`;
   const meter = (v, max, cls) => `<div class="meter ${cls}"><i style="width:${Math.min(100, (v ?? 0) / (max || 1) * 100).toFixed(1)}%"></i></div>`;
-  return `<div class="card"><h2>GPU <span class="mute">（每 8 秒刷新；历史曲线见“训练曲线”页）</span></h2><div class="gpus">` + g.map(x => `
-    <div class="gpu"><b>GPU ${esc(x.index)}</b> <span class="mute">${esc(x.name)}</span>
+  const hot = g.filter(x => x.mem_used != null && x.mem_total && x.mem_used / x.mem_total > 0.93);
+  return `<div class="card"><h2>GPU <span class="mute">（每 8 秒刷新；历史曲线见“训练曲线”页）</span></h2>` +
+    (hot.length ? `<p class="failed small">⚠ GPU ${hot.map(x => x.index).join("、")} 显存超过 93%，接近上限（训练有 OOM 风险）。</p>` : "") +
+    `<div class="gpus">` + g.map(x => `
+    <div class="gpu${x.mem_used != null && x.mem_total && x.mem_used / x.mem_total > 0.93 ? " hot" : ""}"><b>GPU ${esc(x.index)}</b> <span class="mute">${esc(x.name)}</span>
       <div class="gl"><span>利用率</span>${meter(x.util, 100, "u")}<em>${x.util ?? "—"}%</em></div>
       <div class="gl"><span>功率</span>${meter(x.power, x.power_limit, "p")}<em>${x.power != null ? Math.round(x.power) : "—"} / ${x.power_limit != null ? Math.round(x.power_limit) : "—"} W</em></div>
       <div class="gl"><span>显存</span>${meter(x.mem_used, x.mem_total, "m")}<em>${x.mem_used != null ? (x.mem_used / 1024).toFixed(0) : "—"} / ${x.mem_total != null ? (x.mem_total / 1024).toFixed(0) : "—"} GB</em></div>
@@ -206,9 +223,14 @@ function lanesHtml(r) {
       const em = s.em != null ? `<b class="em ${s.em >= r.threshold ? "good" : ""}">EM ${s.em.toFixed(3)}</b>` : "";
       const tip = `${s.label}：${({done: "已完成", running: "进行中", stalled: "长时间无输出", failed: "失败", pending: "待运行"})[s.state]}` +
         (s.seconds ? `，用时 ${hms(s.seconds)}` : `，预计 ${hms(s.est_seconds)}`);
+      const dur = s.state === "done" && s.seconds ? `用时 ${hshort(s.seconds)}`
+        : s.state === "pending" ? `约 ${hshort(s.est_seconds)}` : `剩 ${hshort(s.est_seconds * (1 - s.fraction))}`;
       return `<div class="seg ${s.state}" style="flex:${w}" title="${esc(tip)}"><div class="segfill" style="width:${fill.toFixed(1)}%"></div>
-        <div class="segl">${ICON[s.state]} ${esc(s.label)}${s.state === "running" ? " " + Math.round(s.fraction * 100) + "%" : ""} ${em}</div></div>`;
-    }).join("") + `</div></div>`;
+        <div class="segl">${ICON[s.state]} ${esc(s.label)}${s.state === "running" ? " " + Math.round(s.fraction * 100) + "%" : ""} ${em}</div>
+        <div class="segd">${esc(dur)}</div></div>`;
+    }).join("") + `</div><div class="lsum">${l.remaining_seconds > 0
+        ? `共约 ${hshort(l.est_seconds)} · 已完成 ${hshort(l.done_seconds)} · <b>剩 ${hshort(l.remaining_seconds)}</b>`
+        : `<span class="done">✓ 本段完成</span>`}</div></div>`;
   }).join("") + `</div>`;
 }
 
@@ -221,6 +243,7 @@ function nowBox(r) {
   let h = `<div class="now ${c.state}"><div class="nt">${ICON[c.state]} 正在进行：<b>${esc(c.label)}</b>` +
     (c.state === "stalled" ? ` <span class="ps stalled">日志 ${hms(c.idle_seconds)} 没有更新，请检查</span>` :
      c.idle_seconds != null ? ` <span class="mute">日志 ${hms(c.idle_seconds)} 前更新</span>` : "") + `</div>`;
+  if (c.stage_remaining_seconds != null) h += `<div class="neta">本阶段还需约 <b>${hms(c.stage_remaining_seconds)}</b>，预计 <b>${clock(c.stage_finish_at)}</b> 完成</div>`;
   if (c.explain) h += `<div class="nx">${esc(c.explain)}</div>`;
   if (c.fraction != null) h += `<div class="nb"><span>本步骤进度</span><div class="bar"><i style="width:${(c.fraction * 100).toFixed(1)}%"></i></div><em>${Math.round(c.fraction * 100)}%${c.steps_total ? `（训练第 ${c.steps_done} / ${c.steps_total} 步）` : "（按耗时估计）"}</em></div>`;
   if (c.eta_basis) h += `<div class="mute small">剩余时间${esc(c.eta_basis)}估计（后期每步会越来越慢）</div>`;
@@ -237,7 +260,8 @@ function runCard(r) {
   let h = `<div class="card run"><div class="rh"><h2>${esc(r.title)}</h2>`;
   if (r.summary) { const v = r.summary.verdict; h += `<span class="ps ${v === "PASS" || v === "GO" ? "done" : v === "INVALID" ? "stalled" : "failed"}">判定：${esc(v)}</span>`; }
   h += `</div><div class="overall"><div class="bar big"><i style="width:${pctAll}%"></i></div><div class="ov"><b>${pctAll}%</b>` +
-       (r.started && r.eta_seconds > 0 ? `<span>还需约 <b>${hms(r.eta_seconds)}</b>，预计 <b>${clock(r.finish_at)}</b> 完成</span>` : r.started ? `<span>已完成</span>` : `<span>尚未开始</span>`) +
+       (r.started && r.eta_seconds > 0 ? `<span>整个${esc(r.title.split(" ")[0])}还需约 <b>${hms(r.eta_seconds)}</b>${days(r.eta_seconds)}，预计 <b>${clock(r.finish_at)}</b> 完成</span>`
+        : r.started ? `<span>已完成</span>` : `<span>尚未开始，预计需 ${hms(r.est_total_seconds)}</span>`) +
        `<span class="mute small">按已完成步骤的实测耗时估计</span></div></div>`;
   h += nowBox(r) + lanesHtml(r);
   if (r.kind === "p0" && r.evals && Object.keys(r.evals).length) {
@@ -266,7 +290,7 @@ async function tick() {
   try {
     const s = await (await fetch("/api/state")).json();
     const keepOpen = [...document.querySelectorAll("#live details[open]")].map(d => d.querySelector("summary").textContent);
-    let h = roadmapCard(s.roadmap);
+    let h = roadmapCard(s.roadmap, s.pilots_remaining_seconds);
     const shown = s.runs.filter(r => r.exists && (r.started || r.id === "p0"));
     h += shown.length ? shown.map(runCard).join("") : `<div class="card mute">还没有找到运行目录。请设置 DRZERO_DIR（以及 P2 的 ARM_ROOT）后重启看板。</div>`;
     h += gpuStrip(s.gpus);

@@ -122,6 +122,15 @@ class RunStatusTest(unittest.TestCase):
             self.assertTrue(0 < st["overall_fraction"] < 1)
             self.assertGreater(st["finish_at"], time.time())
             self.assertIn("出题者训练", st["current"]["explain"])
+            # per-stage and per-iteration time
+            self.assertGreater(st["current"]["stage_remaining_seconds"], 0)
+            self.assertGreater(st["current"]["stage_finish_at"], time.time())
+            lane1, lane2 = st["lanes"][1], st["lanes"][2]
+            self.assertEqual(lane1["remaining_seconds"], 0)
+            self.assertGreater(lane1["done_seconds"], 0)
+            self.assertGreater(lane2["remaining_seconds"], 0)
+            self.assertAlmostEqual(lane2["remaining_seconds"] + lane2["done_seconds"], lane2["est_seconds"], delta=2)
+            self.assertGreater(st["est_total_seconds"], st["eta_seconds"])
             self.assertEqual(st["retriever"]["p50_ms"], 12.0)
             self.assertEqual(st["pool_checks"], {"pool_check_iter1": True})
 
@@ -224,6 +233,14 @@ class ServerTest(unittest.TestCase):
                 self.assertEqual(rm[0]["state"], "running")
                 self.assertEqual(rm[0]["result"], "第 1 轮 EM 0.300")
                 self.assertEqual(rm[1]["state"], "pending")
+                # phase-level time: P0 running, P1 from defaults, P2 arms from P0's observed stage times
+                self.assertGreater(rm[0]["remaining_seconds"], 0)
+                self.assertEqual(rm[1]["est_seconds"], round(4.5 * 3600))
+                self.assertEqual(rm[1]["remaining_seconds"], rm[1]["est_seconds"])
+                self.assertGreater(rm[2]["est_seconds"], 2 * 3600 * 20)
+                self.assertIsNone(rm[3]["est_seconds"])
+                self.assertEqual(st["pilots_remaining_seconds"],
+                                 sum(p["remaining_seconds"] for p in rm[:3]))
                 with self.assertRaises(urllib.error.HTTPError):
                     urllib.request.urlopen(base + "/api/log?run=nope")
             finally:

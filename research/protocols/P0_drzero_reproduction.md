@@ -198,3 +198,31 @@ unchanged; this is an environment and resource incident.
      iteration already has its own checkpoints; otherwise they start from the
      previous iteration's checkpoint as upstream does.
    - The training trajectory is unchanged.
+
+## Addendum 2026-11-10 (b) (factory feedback #6: OOM at iteration-1 proposer step 30)
+
+The decision rule, model, hyperparameters, step counts, data and evaluation are
+unchanged.
+
+1. **Incident.** Under p0-r7, the iteration-1 proposer hit CUDA OOM on GPU 0
+   in the actor backward pass at step 30/50 (2026-11-10 13:21; 1.62 GiB
+   requested, 1.47 GiB free). Memory had grown from 42 GB (step 1) to
+   55–59 GB (step 28) as proposer responses lengthened; rewards rose from 0.128
+   to 0.532. Checkpoints at steps 10 and 20 were intact; training resumes from
+   `global_step_20`.
+2. **Decision.** The per-GPU micro-batch for the actor update and log-prob
+   passes goes from the upstream 2 to `TRAIN_MICRO` = 1, for proposer and
+   solver. The mini-batch (256), number of optimiser steps, learning rate and
+   all sampling are unchanged.
+   - What changes: gradient accumulation goes from 32 to 64 micro-batches per
+     GPU, so the per-pass token count, and with it the length-dependent memory
+     peak, halves.
+   - With `loss_agg_mode=token-mean`, the token mean is now taken per sample
+     rather than per pair of samples. Upstream's pairing already differs from
+     ours, because it depends on world size (8 GPUs vs 4); this changes the
+     same detail.
+3. **Not adopted.**
+   - CPU retrieval (`FAISS_GPU=0`): a flat CPU index scans about 64 GB per
+     query, and thousands of searches per step arrive in bursts.
+   - `expandable_segments` stays an opt-in fallback (`EXPANDABLE_SEGMENTS=1`),
+     because its interplay with SGLang's memory saver is unverified.

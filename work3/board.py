@@ -454,8 +454,22 @@ def _segment(label: str, members: List[dict], extra: Optional[dict] = None) -> d
     return seg
 
 
+def _lane_totals(lane: dict) -> dict:
+    segs = lane["segments"]
+    lane["est_seconds"] = round(sum(s["est_seconds"] for s in segs))
+    lane["done_seconds"] = round(sum((s["seconds"] or s["est_seconds"]) if s["state"] == "done"
+                                     else s["est_seconds"] * s["fraction"] for s in segs))
+    lane["remaining_seconds"] = round(sum(s["est_seconds"] * (1 - s["fraction"]) for s in segs
+                                          if s["state"] != "done"))
+    return lane
+
+
 def build_lanes(rows: List[dict], kind: str, evals: dict, has_summary: bool) -> List[dict]:
     """Group raw stages into a few readable lanes: 准备 / 第 t 轮 (4 segments) / 收尾."""
+    return [_lane_totals(l) for l in _build_lanes(rows, kind, evals, has_summary)]
+
+
+def _build_lanes(rows: List[dict], kind: str, evals: dict, has_summary: bool) -> List[dict]:
     by = {r["name"]: r for r in rows}
     lanes = []
     if kind == "p0":
@@ -573,6 +587,10 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
     if current:
         current.pop("_steps", None)
         current["explain"] = STAGE_TEXT.get(stage_type(current["stage"]), "")
+        row = next(r for r in rows if r["name"] == current["stage"])
+        if row["state"] in ("running", "stalled"):
+            current["stage_remaining_seconds"] = round(row["est_seconds"] * (1 - row["fraction"]))
+            current["stage_finish_at"] = now + current["stage_remaining_seconds"]
     # errors over all logs (tails)
     errors = {"traceback": 0, "failed": 0, "oom": 0, "undefined_function": 0,
               "undefined_function_names": {}, "last_lines": []}
@@ -597,6 +615,8 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
             "started": started, "stages": rows, "current": current,
             "eta_seconds": round(remaining) if run_dir.is_dir() else None,
             "overall_fraction": done_part / total, "finish_at": (now + remaining) if started else None,
+            "est_total_seconds": round(total),
+            "est_by_type": {stage_type(r["name"]): r["est_seconds"] for r in rows},
             "lanes": build_lanes(rows, kind, evals, bool(summary)),
             "errors": errors, "evals": evals, "threshold": P0_THRESHOLD,
             "summary": ({k: summary.get(k) for k in ("verdict", "problems", "pooled", "primary",
@@ -670,8 +690,11 @@ class Board:
         now = time.time()
         runs = [run_status(i, t, d, plan, k, now) for i, t, d, plan, k in self.specs]
         p2 = load_json(self.p2_summary) if self.p2_summary else None
-        return {"now": now, "runs": runs, "gpus": gpus(), "p2": p2,
-                "roadmap": roadmap(runs, p2, load_json(self.root / "research/STATE.json") or {})}
+        rm = roadmap(runs, p2, load_json(self.root / "research/STATE.json") or {})
+        left = [p["remaining_seconds"] for p in rm if p["key"] in ("P0", "P1", "P2")
+                and p.get("remaining_seconds") is not None]
+        return {"now": now, "runs": runs, "gpus": gpus(), "p2": p2, "roadmap": rm,
+                "pilots_remaining_seconds": sum(left) if left else None}
 
     def log_tail(self, run_id: str, lines: int = 80) -> Optional[dict]:
         spec = next((s for s in self.specs if s[0] == run_id), None)
@@ -695,8 +718,18 @@ VERDICT_TEXT = {"PASS": ("通过", "done"), "FAIL": ("未通过", "failed"), "IN
 
 def roadmap(runs: List[dict], p2: Optional[dict], state: dict) -> List[dict]:
     by = {r["id"]: r for r in runs}
+    p0 = by.get("p0") or {}
+    p0_types = p0.get("est_by_type") or {}     # observed-or-default seconds per stage type in P0
 
-    def phase(key, title, what, run_ids, verdict=None, result=None):
+    def run_time(r: dict, like_p0: bool) -> tuple:
+        """(total, remaining) seconds; P2 arms not yet started are estimated from P0's stage times."""
+        if like_p0 and p0_types and not r["started"]:
+            total = sum(p0_types.get(stage_type(s["name"]), s["est_seconds"]) for s in r["stages"])
+            return total, total
+        total = r.get("est_total_seconds") or 0
+        return total, (r.get("eta_seconds") or 0) if r["started"] else total
+
+    def phase(key, title, what, run_ids, verdict=None, result=None, like_p0=()):
         rs = [by[i] for i in run_ids if i in by]
         if verdict in VERDICT_TEXT:
             status, cls = VERDICT_TEXT[verdict]
@@ -705,10 +738,13 @@ def roadmap(runs: List[dict], p2: Optional[dict], state: dict) -> List[dict]:
             status, cls = f"进行中 {round(100 * sum(done) / max(1, len(rs)))}%", "running"
         else:
             status, cls = "未开始", "pending"
+        times = [run_time(r, r["id"] in like_p0) for r in rs]
+        total = round(sum(t for t, _ in times)) if rs else None
+        remaining = 0 if verdict in VERDICT_TEXT else (round(sum(x for _, x in times)) if rs else None)
         return {"key": key, "title": title, "what": what, "gate": ROADMAP_GATES.get(key, ""),
-                "status": status, "state": cls, "result": result}
+                "status": status, "state": cls, "result": result,
+                "est_seconds": total, "remaining_seconds": remaining}
 
-    p0 = by.get("p0") or {}
     p0_em = [(t, e.get("average")) for t, e in sorted((p0.get("evals") or {}).items())
              if t != "0" and e and e.get("average") is not None]
     p0_res = f"第 {p0_em[-1][0]} 轮 EM {p0_em[-1][1]:.3f}" if p0_em else None
@@ -725,8 +761,9 @@ def roadmap(runs: List[dict], p2: Optional[dict], state: dict) -> List[dict]:
               (p0.get("summary") or {}).get("verdict"), p0_res),
         phase("P1", "P1 噪声诊断", "测题池里“运气”的占比，证伪核心假设", ["p1"],
               (p1.get("summary") or {}).get("verdict"), p1_res),
-        phase("P2", "P2 方法对比", "Dr. Zero / Beta 平滑 / NCP 三臂对比", ["p2-beta", "p2-ncp"],
-              (p2 or {}).get("verdict"), p2_res),
+        phase("P2", "P2 方法对比", "Dr. Zero / Beta 平滑 / NCP 三臂对比",
+              ["p2-beta", "p2-ncp", "p2-beta-p1", "p2-ncp-p1"], (p2 or {}).get("verdict"), p2_res,
+              like_p0=("p2-beta", "p2-ncp")),
         phase("M", "主实验", "多种子、7B、消融、推广到其他自博弈", []),
         {"key": "S", "title": "投稿", "what": f"{venue.get('primary', 'ICML 2027')}（备选 {venue.get('alternative', 'SIGIR 2027')}）",
          "gate": f"{venue.get('decide_by', '2026-12-15')} 前确定投哪个会", "status": "预计 2027-01 下旬",

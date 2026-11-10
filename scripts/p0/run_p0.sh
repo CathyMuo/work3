@@ -22,6 +22,11 @@
 #                     an OOM at proposer step 16 on GPU 0 and gave no speed-up -- do not raise it)
 #   SAVE_FREQ (10; checkpoint every N steps, upstream 25)  CKPT_KEEP (2; checkpoints kept per run)
 #   FORCE (0; 1 = re-run sub-stages of an iteration even if their outputs already exist)
+#   TRAIN_MICRO (1; per-GPU micro-batch for the actor update and log-prob passes, upstream 2.
+#                Same mini-batch and optimiser step; halves the per-pass token count, which is
+#                what grew until the OOM at proposer step 30 -- factory feedback #6)
+#   EXPANDABLE_SEGMENTS (0; 1 = PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for all stages,
+#                        a fragmentation fallback; not verified with SGLang's memory saver)
 #   EVAL_ROLLOUT_MEM (0.6; evaluation SGLang memory fraction; memory only)
 #   ROLLOUT_TP (1; in-trainer SGLang tensor parallel for proposer and solver, upstream 2; parallelism only)
 #   REWARD_TP (2) / REWARD_DP (NGPU/REWARD_TP): proposer-reward SGLang server layout (upstream tp=2)
@@ -53,6 +58,10 @@ CKPT="checkpoints/dr-zero"
 PATCHED="$OUT_ROOT/patched"
 export PYTHONPATH="$DRZERO_DIR:$WORK3_DIR:${PYTHONPATH:-}"
 export WANDB_MODE="${WANDB_MODE:-offline}"
+TRAIN_MICRO="${TRAIN_MICRO:-1}"
+if [ "${EXPANDABLE_SEGMENTS:-0}" = "1" ]; then
+  export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+fi
 ARM="${P0_REWARD_ARM:-}"
 case "$ARM" in ""|beta|ncp) ;; *) echo "P0_REWARD_ARM must be empty, beta or ncp"; exit 2 ;; esac
 [ -z "$ARM" ] || export WORK3_REWARD_LOG="$OUT_ROOT/reward_log.jsonl"
@@ -259,6 +268,8 @@ stage_patch() {
       fi
       if [ "$kind" != gen_data ]; then
         sedargs+=(-e "s#^tp=2\$#tp=$ROLLOUT_TP#")
+        # actor update / log-prob micro-batch (mini-batch 256 and the optimiser step are unchanged)
+        sedargs+=(-e "s#^batch_per_gpu=2\$#batch_per_gpu=$TRAIN_MICRO#")
         # crash recovery: checkpoint more often (keep only the latest few) so a crash loses at most
         # SAVE_FREQ steps; verl's default resume_mode=auto picks the latest checkpoint up again
         sedargs+=(-e "s#^    trainer.save_freq=25 \\\\\$#    trainer.save_freq=$SAVE_FREQ \\\\\\n    trainer.max_actor_ckpt_to_keep=$CKPT_KEEP \\\\#")
@@ -309,7 +320,9 @@ stage_patch() {
   [ "$n_sv" = 6 ] || { log "patch FAILED: checkpoint frequency set in $n_sv of 6 scripts"; exit 2; }
   local n_rm; n_rm=$(grep -l 'WORK3_RESUME_MODE' "$PATCHED"/iter2_challenger.sh "$PATCHED"/iter3_challenger.sh | wc -l)
   [ "$n_rm" = 2 ] || { log "patch FAILED: resume switch in $n_rm of 2 proposer scripts"; exit 2; }
-  log "checkpoints: every $SAVE_FREQ steps, keep $CKPT_KEEP; proposer rollout memory $CHAL_ROLLOUT_MEM"
+  local n_mb; n_mb=$(grep -l "^batch_per_gpu=$TRAIN_MICRO\$" "$PATCHED"/iter*_challenger.sh "$PATCHED"/iter*_solver.sh | wc -l)
+  [ "$n_mb" = 6 ] || { log "patch FAILED: micro-batch set in $n_mb of 6 scripts"; exit 2; }
+  log "checkpoints: every $SAVE_FREQ steps, keep $CKPT_KEEP; proposer rollout memory $CHAL_ROLLOUT_MEM; micro-batch $TRAIN_MICRO${PYTORCH_CUDA_ALLOC_CONF:+; $PYTORCH_CUDA_ALLOC_CONF}"
   log "parallel layout: in-trainer rollout tp=$ROLLOUT_TP; reward server tp=$REWARD_TP dp=$REWARD_DP (metrics=$REWARD_METRICS)"
   grep -n "^gpus=\|^dp=\|^model=\|conda activate\|faiss_gpu\|retriever_model\|^rollout_memory\|gpu_memory_utilization\|mem-fraction\|p0_launch\|wait_retriever\|CONFIG_PATH=\|TOOL_CONFIG=\|--port=\|base_url" "$PATCHED"/iter1_*.sh
   log "patched scripts in $PATCHED"
