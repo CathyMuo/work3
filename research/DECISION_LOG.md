@@ -251,3 +251,33 @@ tp 1 × dp 4; KV-bound → revisit memory; latency-bound tail → accept.
 Recorded in P0 addendum 2026-11-09 (b).
 
 Decision: `SPEED_R5_TP1_AND_PROBE`.
+
+## 2026-11-10: OOM at proposer step 16; restore 0.25 and add crash recovery (tags `p0-r6`, `p1-r6`, `p2-r6`)
+
+The factory's p0-r2 run of the iteration-1 proposer hit CUDA OOM on GPU 0 at
+step 16/50, inside verl's FSDP→SGLang weight hand-off. No checkpoint existed
+(upstream saves every 25 steps). The cause is our own r2 change: raising the
+proposer's in-trainer SGLang memory fraction to 0.45. It brought no speed-up,
+since the time goes to the separate reward server, and it removed the
+headroom GPU 0 needs as training-side activations grow with longer proposer
+responses.
+
+Changes:
+
+- the fraction returns to the upstream 0.25;
+- checkpoints every 10 steps, keeping the latest 2;
+- re-running an iteration skips finished sub-stages and resumes training from
+  the latest checkpoint; proposer iterations 2–3 switch to `resume_mode=auto`
+  only when they already have their own checkpoints.
+
+Verified with a patch dry run and a stub-script crash-recovery simulation.
+
+The ConnectTimeout retries seen before the crash come from the reward client's
+connection burst to the reward server. They are retried successfully and are
+unrelated to the OOM. The KV cache is preallocated and does not grow with
+request volume; the growing quantity is the training-side activation peak.
+
+Recorded in P0 addendum 2026-11-10. Gate unchanged. The factory restarts P0
+from iteration 1.
+
+Decision: `OOM_FIX_R6`.

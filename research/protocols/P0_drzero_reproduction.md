@@ -169,3 +169,32 @@ unchanged. These items change only parallel layout and observability:
 4. Batch sizes are deliberately not changed. Per the factory's timing, the
    update phase is about 5% of a proposer step, and GPU 0 has about 0.5 GB of
    headroom at the training peak.
+
+## Addendum 2026-11-10 (factory feedback #4: OOM at iteration-1 proposer step 16)
+
+The decision rule, model, hyperparameters, step counts, data and evaluation are
+unchanged; this is an environment and resource incident.
+
+1. **Incident.** Under p0-r2, the iteration-1 proposer crashed with CUDA OOM
+   on GPU 0 at step 16/50 (2026-11-09 17:46). The crash happened in verl
+   `fsdp_sglang` `wake_up` → FSDP `state_dict` (52 MiB free, 86 MiB needed).
+   There was no checkpoint yet (upstream saves every 25 steps), so the run
+   restarts from scratch. Rewards had risen from 0.128 to 0.356 by then.
+2. **Cause.** The proposer's in-trainer SGLang memory fraction had been raised
+   from the upstream 0.25 to 0.45 in addendum 2026-11-09 item 4. It bought no
+   speed, because 94% of a proposer step is the separate reward server. It is
+   re-occupied at every wake-up, and GPU 0 also hosts the retriever encoder
+   and part of the reward server. The training-side peak grows as proposer
+   responses lengthen.
+3. **Decision.** `CHAL_ROLLOUT_MEM` returns to the upstream 0.25. Item 4 of
+   addendum 2026-11-09 is withdrawn for the proposer; the evaluation fraction
+   is unaffected.
+4. **Crash recovery (bookkeeping only).**
+   - Checkpoints every `SAVE_FREQ` = 10 steps, keeping the latest
+     `CKPT_KEEP` = 2. The final step (50 / 100 / 150) is always saved.
+   - Re-running `run_p0.sh iter<t>` skips sub-stages whose outputs exist.
+   - Training resumes from the latest checkpoint (verl `resume_mode=auto`).
+     For proposer iterations 2–3 this switch is made only when that
+     iteration already has its own checkpoints; otherwise they start from the
+     previous iteration's checkpoint as upstream does.
+   - The training trajectory is unchanged.

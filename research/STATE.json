@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "project": "work3",
-  "updated_at": "2026-11-09",
+  "updated_at": "2026-11-10",
   "current_stage": "P0",
-  "status": "P0 running at the factory (iteration-1 proposer). Feedback #3 (speed): 94% of a proposer step is the proposer-reward rollout; p0-r5 switches in-trainer rollouts to TP 1, instruments the reward server and adds a read-only speed probe. Run scripts changed in r5 (parallel layout only).",
-  "next_action": "Factory: clone p0-r5 into a separate directory, re-run patch (safe mid-run), run probe and return its output; continue P0. Home: decide the reward-server layout from the probe.",
+  "status": "P0 iteration-1 proposer crashed (CUDA OOM, step 16/50, 2026-11-09) under p0-r2's 0.45 proposer rollout memory. p0-r6 restores the upstream 0.25, checkpoints every 10 steps with automatic resume, and includes r5's TP-1 in-trainer rollouts, reward-server metrics and the speed probe. P0 to restart from iteration 1.",
+  "next_action": "Factory: checkout p0-r6, check, patch, run iter1 from scratch; run `run_p0.sh probe` during the first proposer step and return its verdict. Home: decide the reward-server layout from the probe.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -29,7 +29,7 @@
   "upstreams": {
     "drzero": "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
   },
-  "p0_release": "p0-r5",
-  "p1_release": "p1-r5",
-  "p2_release": "p2-r5"
+  "p0_release": "p0-r6",
+  "p1_release": "p1-r6",
+  "p2_release": "p2-r6"
 }

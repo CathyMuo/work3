@@ -18,7 +18,10 @@
 #   GEN_MEM   (unset = upstream 0.8; memory fraction for data generation, only if it OOMs)
 #   ALLOW_BUSY_GPU (0; 1 = let `check` pass while other GPU processes are running)
 #   P0_REWARD_ARM (unset = upstream Dr. Zero reward; beta | ncp = P2 arm, set by scripts/p2/run_p2.sh)
-#   CHAL_ROLLOUT_MEM (0.45; proposer in-trainer SGLang memory fraction, upstream 0.25; memory only)
+#   CHAL_ROLLOUT_MEM (0.25 = upstream; proposer in-trainer SGLang memory fraction. 0.45 (r2-r5) caused
+#                     an OOM at proposer step 16 on GPU 0 and gave no speed-up -- do not raise it)
+#   SAVE_FREQ (10; checkpoint every N steps, upstream 25)  CKPT_KEEP (2; checkpoints kept per run)
+#   FORCE (0; 1 = re-run sub-stages of an iteration even if their outputs already exist)
 #   EVAL_ROLLOUT_MEM (0.6; evaluation SGLang memory fraction; memory only)
 #   ROLLOUT_TP (1; in-trainer SGLang tensor parallel for proposer and solver, upstream 2; parallelism only)
 #   REWARD_TP (2) / REWARD_DP (NGPU/REWARD_TP): proposer-reward SGLang server layout (upstream tp=2)
@@ -37,7 +40,9 @@ OUT_ROOT="${OUT_ROOT:-$DRZERO_DIR/work3_p0}"
 E5_MODEL="${E5_MODEL:-intfloat/e5-base-v2}"
 RET_PORT="${RET_PORT:-8100}"
 REWARD_PORT="${REWARD_PORT:-8101}"
-CHAL_ROLLOUT_MEM="${CHAL_ROLLOUT_MEM:-0.45}"
+CHAL_ROLLOUT_MEM="${CHAL_ROLLOUT_MEM:-0.25}"
+SAVE_FREQ="${SAVE_FREQ:-10}"
+CKPT_KEEP="${CKPT_KEEP:-2}"
 ROLLOUT_TP="${ROLLOUT_TP:-1}"
 REWARD_TP="${REWARD_TP:-2}"
 REWARD_DP="${REWARD_DP:-$(( NGPU / REWARD_TP ))}"
@@ -249,6 +254,12 @@ stage_patch() {
       fi
       if [ "$kind" != gen_data ]; then
         sedargs+=(-e "s#^tp=2\$#tp=$ROLLOUT_TP#")
+        # crash recovery: checkpoint more often (keep only the latest few) so a crash loses at most
+        # SAVE_FREQ steps; verl's default resume_mode=auto picks the latest checkpoint up again
+        sedargs+=(-e "s#^    trainer.save_freq=25 \\\\\$#    trainer.save_freq=$SAVE_FREQ \\\\\\n    trainer.max_actor_ckpt_to_keep=$CKPT_KEEP \\\\#")
+        # proposer iterations 2-3 force resume_path (previous iteration); run_p0.sh switches this
+        # to auto when the current iteration already has its own checkpoints
+        sedargs+=(-e "s#^    trainer.resume_mode=\"resume_path\" \\\\\$#    trainer.resume_mode=\"\${WORK3_RESUME_MODE:-resume_path}\" \\\\#")
       fi
       [ "$FAISS_GPU" = "1" ] || sedargs+=(-e "/^ *--faiss_gpu \\\\\$/d")
       [ -z "${GEN_MEM:-}" ] || sedargs+=(-e "s#^rollout_memory_utilization=0.8\$#rollout_memory_utilization=$GEN_MEM#")
@@ -289,6 +300,11 @@ stage_patch() {
   if grep -n -- "--tp-size=\${tp}\|--dp-size=\${dp}" "$PATCHED"/iter*_challenger.sh; then
     log "patch FAILED: reward server still follows the in-trainer tp/dp"; exit 2
   fi
+  local n_sv; n_sv=$(grep -l "trainer.max_actor_ckpt_to_keep=$CKPT_KEEP " "$PATCHED"/iter*_challenger.sh "$PATCHED"/iter*_solver.sh | wc -l)
+  [ "$n_sv" = 6 ] || { log "patch FAILED: checkpoint frequency set in $n_sv of 6 scripts"; exit 2; }
+  local n_rm; n_rm=$(grep -l 'WORK3_RESUME_MODE' "$PATCHED"/iter2_challenger.sh "$PATCHED"/iter3_challenger.sh | wc -l)
+  [ "$n_rm" = 2 ] || { log "patch FAILED: resume switch in $n_rm of 2 proposer scripts"; exit 2; }
+  log "checkpoints: every $SAVE_FREQ steps, keep $CKPT_KEEP; proposer rollout memory $CHAL_ROLLOUT_MEM"
   log "parallel layout: in-trainer rollout tp=$ROLLOUT_TP; reward server tp=$REWARD_TP dp=$REWARD_DP (metrics=$REWARD_METRICS)"
   grep -n "^gpus=\|^dp=\|^model=\|conda activate\|faiss_gpu\|retriever_model\|^rollout_memory\|gpu_memory_utilization\|mem-fraction\|p0_launch\|wait_retriever\|CONFIG_PATH=\|TOOL_CONFIG=\|--port=\|base_url" "$PATCHED"/iter1_*.sh
   log "patched scripts in $PATCHED"
@@ -301,20 +317,39 @@ convert_solver() {  # convert_solver <t>
     --local_dir "$base/global_step_50/actor" --target_dir "$base/solver_iter$1_hf"
 }
 
-stage_iter() {  # stage_iter <t>
+skip_done() {  # skip_done <name> <artifact>: true (and logs) if the sub-stage's output already exists
+  if [ "${FORCE:-0}" != "1" ] && [ -e "$2" ]; then
+    log "skip $1: output already present ($2); FORCE=1 re-runs it"
+    return 0
+  fi
+  return 1
+}
+
+stage_iter() {  # stage_iter <t>; re-running it after a crash resumes where it stopped
   local t="$1"
+  local chal="$CKPT/challenger_iter${t}_ratio${RATIO}_grpo_batch_group1-5_${MODEL_NAME}"
+  local solv="$CKPT/solver_iter${t}_ratio${RATIO}_grpo_group5_${MODEL_NAME}"
+  local pool="data/zero_challenger_iter${t}_ratio${RATIO}_grpo_batch_group1-5_${MODEL_NAME}.parquet"
   need "$PATCHED/iter${t}_challenger.sh"; need data/test_1200.parquet
   if [ "$t" -gt 1 ]; then
     need "$CKPT/solver_iter$((t-1))_ratio${RATIO}_grpo_group5_${MODEL_NAME}/solver_iter$((t-1))_hf/config.json"
   fi
   cleanup_servers
-  timed "iter${t}_challenger" bash "$PATCHED/iter${t}_challenger.sh" "$RATIO" "trainer.total_training_steps=$((50 * t))"
-  timed "iter${t}_gen_data" bash "$PATCHED/iter${t}_gen_data.sh" "$RATIO"
-  timed "iter${t}_pool_check" python -m work3.pool_check \
-    "data/zero_challenger_iter${t}_ratio${RATIO}_grpo_batch_group1-5_${MODEL_NAME}.parquet" \
-    --out "$OUT_ROOT/pool_check_iter${t}.json"
-  timed "iter${t}_solver" bash "$PATCHED/iter${t}_solver.sh" "$RATIO" "trainer.total_training_steps=50"
-  timed "iter${t}_convert" convert_solver "$t"
+  if ! skip_done "iter${t}_challenger" "$chal/global_step_$((50 * t))/actor"; then
+    # iterations 2-3 normally start from the previous iteration's checkpoint; if this iteration
+    # already saved its own (a crash), continue from the latest one instead
+    if [ "$t" -gt 1 ] && ls -d "$chal"/global_step_* >/dev/null 2>&1; then
+      export WORK3_RESUME_MODE=auto
+      log "iter${t}_challenger: resuming from its own latest checkpoint"
+    fi
+    timed "iter${t}_challenger" bash "$PATCHED/iter${t}_challenger.sh" "$RATIO" "trainer.total_training_steps=$((50 * t))"
+    unset WORK3_RESUME_MODE
+  fi
+  skip_done "iter${t}_gen_data" "$pool" || timed "iter${t}_gen_data" bash "$PATCHED/iter${t}_gen_data.sh" "$RATIO"
+  timed "iter${t}_pool_check" python -m work3.pool_check "$pool" --out "$OUT_ROOT/pool_check_iter${t}.json"
+  skip_done "iter${t}_solver" "$solv/global_step_50/actor" ||
+    timed "iter${t}_solver" bash "$PATCHED/iter${t}_solver.sh" "$RATIO" "trainer.total_training_steps=50"
+  skip_done "iter${t}_convert" "$solv/solver_iter${t}_hf/config.json" || timed "iter${t}_convert" convert_solver "$t"
 }
 
 start_retriever() {
