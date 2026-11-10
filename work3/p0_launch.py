@@ -86,18 +86,23 @@ class LatencyStats:
 
         t0 = time.perf_counter()
         with self.lock:
+            ahead = self.in_flight          # requests already in flight when this one arrived
             self.in_flight += 1
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
-            self.record(time.time(), time.perf_counter() - t0, status["code"])
+            self.record(time.time(), time.perf_counter() - t0, status["code"], ahead)
 
-    def record(self, now: float, seconds: float, code: int) -> None:
+    # Requests that arrive while at most this many others are in flight measure the service time
+    # itself; the rest also include waiting for the server's worker threads (factory feedback #5).
+    LOW_LOAD = 2
+
+    def record(self, now: float, seconds: float, code: int, ahead: int = 0) -> None:
         with self.lock:
             self.in_flight -= 1
             self.total += 1
             self.errors += int(code >= 500 or code == 0)
-            self.events.append((now, seconds, code))
+            self.events.append((now, seconds, code, ahead))
             while self.events and now - self.events[0][0] > self.window:
                 self.events.popleft()
             due = self.path and now - self.last_write >= self.every
@@ -107,15 +112,25 @@ class LatencyStats:
         if due:
             self.write(snap)
 
+    @staticmethod
+    def _quantile(values, p):
+        return round(values[min(len(values) - 1, int(p * len(values)))] * 1000, 1) if values else None
+
     def snapshot(self, now: float) -> dict:
-        lat = sorted(s for _, s, _ in self.events)
-        q = lambda p: round(lat[min(len(lat) - 1, int(p * len(lat)))] * 1000, 1) if lat else None
+        lat = sorted(e[1] for e in self.events)
+        low = sorted(e[1] for e in self.events if e[3] <= self.LOW_LOAD)
+        q = self._quantile
         span = min(self.window, max(1.0, now - self.events[0][0])) if self.events else self.window
         return {"updated": now, "window_seconds": self.window, "requests_in_window": len(lat),
                 "requests_per_second": round(len(lat) / span, 3),
-                "errors_in_window": sum(1 for _, _, c in self.events if c >= 500 or c == 0),
-                "p50_ms": q(0.5), "p95_ms": q(0.95), "max_ms": q(1.0),
+                "errors_in_window": sum(1 for e in self.events if e[2] >= 500 or e[2] == 0),
+                # end-to-end at the server, including waiting for a worker thread under load
+                "p50_ms": q(lat, 0.5), "p95_ms": q(lat, 0.95), "max_ms": q(lat, 1.0),
                 "mean_ms": round(sum(lat) / len(lat) * 1000, 1) if lat else None,
+                # service time: requests that arrived with <= LOW_LOAD others in flight
+                "low_load_requests": len(low), "p50_ms_low_load": q(low, 0.5), "p95_ms_low_load": q(low, 0.95),
+                "mean_in_flight_at_arrival": (round(sum(e[3] for e in self.events) / len(self.events), 1)
+                                              if self.events else None),
                 "in_flight": self.in_flight, "total_requests": self.total, "total_errors": self.errors}
 
     def write(self, snap: dict) -> None:

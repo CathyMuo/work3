@@ -281,3 +281,37 @@ Recorded in P0 addendum 2026-11-10. Gate unchanged. The factory restarts P0
 from iteration 1.
 
 Decision: `OOM_FIX_R6`.
+
+## 2026-11-10: Speed review after factory feedback #5 (tags `p0-r7`, `p1-r7`, `p2-r7`)
+
+Factory results:
+
+- p0-r6's TP-1 in-trainer rollouts cut a proposer step from 452 s to 274 s
+  (39%), with even memory across the four GPUs. Kept.
+- Probe: reward server running mean 9.7, queue 0, KV use 5%, every GPU busy
+  26–30%. Data parallelism works and the server is latency-bound, so it stays
+  at the upstream tp 2 × dp 2 (TP lowers single-sequence latency).
+
+What remains is the synchronous-RL tail. A step waits for its slowest few
+multi-turn trajectories: up to 5 generate→search turns with up to 2560 new
+tokens each.
+
+The factory's "batch by hop" proposal (A) and probe-then-batch (B) are
+rejected. SGLang batches continuously, and concurrency is far from saturated,
+so the step time ≈ the longest trajectory; running hop groups one after
+another would add their tails. Raising `max_parallel_calls` (C) is irrelevant:
+it limits tool calls per turn. HRPO's hop grouping acts only on the advantage
+computation, as designed.
+
+Fixes in r7:
+
+- `check` ran `set_event_loop(None)` before `get_event_loop()`, which fails on
+  every uvloop version. It now reproduces the runtime situation in a fresh
+  interpreter.
+- The retriever stats separate service time (requests arriving with ≤ 2
+  others in flight) from end-to-end time including queueing; the probe judges
+  retrieval only on the former.
+
+Training path unchanged: patch output is identical to r6.
+
+Decision: `SPEED_REVIEW_R7`.

@@ -177,14 +177,19 @@ try:
     print("flash-attn", flash_attn.__version__, "torch cxx11 abi", torch._C._GLIBCXX_USE_CXX11_ABI)
 except Exception as e:
     bad.append(f"flash-attn import failed ({e!r}); install the wheel matching torch's cxx11 ABI")
-try:
-    import asyncio, uvloop
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())   # what sglang does on import
-    asyncio.set_event_loop(None)
-    asyncio.get_event_loop()                                   # what verl fsdp_sglang.py does
-    print("uvloop", uvloop.__version__, "get_event_loop ok")
-except Exception as e:
-    bad.append(f"uvloop get_event_loop failed ({e!r}); pin uvloop==0.21.0")
+# Reproduce the runtime situation in a fresh interpreter: sglang installs the uvloop policy on
+# import, then verl's fsdp_sglang.py calls get_event_loop() in a main thread that never set a loop.
+# (r2-r6 also called set_event_loop(None) first, which fails on every uvloop version -- removed
+# after factory feedback #5.)
+import subprocess
+probe = subprocess.run([sys.executable, "-c",
+    "import asyncio, uvloop; asyncio.set_event_loop_policy(uvloop.EventLoopPolicy()); "
+    "asyncio.get_event_loop(); print(uvloop.__version__)"], capture_output=True, text=True)
+if probe.returncode == 0:
+    print("uvloop", probe.stdout.strip(), "get_event_loop ok")
+else:
+    bad.append("uvloop get_event_loop failed (" + (probe.stderr.strip().splitlines() or ["?"])[-1]
+               + "); pin uvloop==0.21.0")
 if bad:
     print("PROBLEMS:", *bad, sep="\n  ")
     sys.exit(2)

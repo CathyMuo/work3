@@ -1,6 +1,6 @@
 # P1 厂内指导：噪声诊断（P0 跑完后运行）
 
-版本：tag `p1-r6`（2026-11-10，含反馈 #2–#4 的修复、提速与崩溃续跑；环境同 P0 指导第 3 节）。协议（已冻结，不要改）：[research/protocols/P1_noise_diagnosis.md](../../research/protocols/P1_noise_diagnosis.md)，执行以末尾的 **Addendum 2026-11-06** 为准。
+版本：tag `p1-r7`（2026-11-10，含反馈 #2–#5 的修复、提速与崩溃续跑；环境同 P0 指导第 3 节）。协议（已冻结，不要改）：[research/protocols/P1_noise_diagnosis.md](../../research/protocols/P1_noise_diagnosis.md)，执行以末尾的 **Addendum 2026-11-06** 为准。
 
 **前提**：P0 全部跑完（包括 `gate`），且 `p0_summary.json` 已经发回家服。只要 P0 不是 INVALID 就可以跑 P1；P0 是否 PASS 由家服判断，P1 的产物照样有用。
 
@@ -11,7 +11,7 @@
 ## 1. 准备
 
 ```bash
-cd <工作目录>/work3 && git fetch --tags && git checkout p1-r6
+cd <工作目录>/work3 && git fetch --tags && git checkout p1-r7
 conda activate drzero
 # 与 P0 相同的变量：DRZERO_DIR、MODEL_3B、E5_MODEL、NGPU；端口默认 8100 / 8101
 P1=<工作目录>/work3/scripts/p1/run_p1.sh

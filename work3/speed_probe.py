@@ -142,14 +142,27 @@ def summarize(samples: List[dict], info: Optional[dict], procs: List[dict], retr
         if reward["token_usage_max"] >= 0.95 and reward["queued_share"] >= 0.3:
             verdict.append("奖励服务 KV 缓存经常占满且有请求排队：吞吐受显存限制。")
         elif reward["running_mean"] < 32 and reward["queued_mean"] == 0:
-            verdict.append("奖励服务同时只在处理很少的请求、也没有排队：时间花在等待（长尾的多轮生成或检索），不是算力或显存不足。")
+            verdict.append("奖励服务同时只在处理很少的请求、也没有排队：所有请求一到就已在并行处理，"
+                           "一步的耗时由最慢的那几条多轮轨迹决定（长尾），不是算力、显存或并发不足。"
+                           "把题目分批依次跑只会把各批的尾巴相加，不会更快。")
         else:
             verdict.append("奖励服务负载正常，没有明显排队。")
     else:
         verdict.append("奖励服务没有开启 /metrics（p0-r5 起的 patch 会开启），无法判断排队与 KV 占用。")
     if retr:
-        verdict.append(f"检索：p50 {retr.get('p50_ms')} ms，p95 {retr.get('p95_ms')} ms，进行中 {retr.get('in_flight')}。"
-                       + ("检索偏慢，可能是瓶颈。" if (retr.get("p95_ms") or 0) > 1000 else ""))
+        low_p95 = retr.get("p95_ms_low_load")
+        line = (f"检索（服务端端到端，含高峰排队）：p50 {retr.get('p50_ms')} ms，p95 {retr.get('p95_ms')} ms；")
+        if low_p95 is not None:
+            line += f"低负载时（到达时前面 ≤2 个请求）p50 {retr.get('p50_ms_low_load')} ms，p95 {low_p95} ms。"
+            if low_p95 > 300:
+                line += "低负载下仍偏慢，检索本身可能是瓶颈。"
+            elif (retr.get("p95_ms") or 0) > 1000:
+                line += "高峰时的长延迟来自请求排队等工作线程，不是检索本身慢；长尾阶段几乎没有排队，不是瓶颈。"
+            else:
+                line += "检索不是瓶颈。"
+        else:
+            line += "（这份统计来自 p0-r7 之前的版本，没有区分排队与处理时间，不能据此判断检索慢。）"
+        verdict.append(line)
     return {"per_gpu": per_gpu, "reward_server": info, "reward_load": reward, "retriever": retr,
             "processes": procs, "verdict": verdict}
 

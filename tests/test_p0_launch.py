@@ -70,6 +70,18 @@ class LaunchTest(unittest.TestCase):
             sys.argv = saved[1]
         self.assertEqual(calls, [{"host": "0.0.0.0", "port": 8123}])
 
+    def test_latency_stats_separates_queueing(self):
+        stats = p0_launch.LatencyStats(app=None, path=None)
+        for i in range(10):                                   # quiet: fast service
+            stats.in_flight += 1; stats.record(100.0 + i, 0.025, 200, ahead=0)
+        for i in range(10):                                   # burst: long waits behind 50 others
+            stats.in_flight += 1; stats.record(120.0 + i, 0.9, 200, ahead=50)
+        s = stats.snapshot(130.0)
+        self.assertEqual(s["low_load_requests"], 10)
+        self.assertEqual(s["p95_ms_low_load"], 25.0)
+        self.assertGreater(s["p95_ms"], 800)
+        self.assertEqual(s["mean_in_flight_at_arrival"], 25.0)
+
     def test_missing_separator_exits(self):
         with self.assertRaises(SystemExit):
             p0_launch.main(["serve", "--port", "1"])

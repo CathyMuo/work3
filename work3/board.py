@@ -280,7 +280,9 @@ class History:
                     self._last_ret[run_id] = s["updated"]
                     self.retriever[run_id].append({"t": s["updated"], "p50": s.get("p50_ms"),
                                                    "p95": s.get("p95_ms"), "rps": s.get("requests_per_second"),
-                                                   "in_flight": s.get("in_flight")})
+                                                   "in_flight": s.get("in_flight"),
+                                                   "p50_low": s.get("p50_ms_low_load"),
+                                                   "p95_low": s.get("p95_ms_low_load")})
 
     def start(self) -> None:
         def loop():

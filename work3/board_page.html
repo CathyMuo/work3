@@ -248,7 +248,8 @@ function runCard(r) {
   const warn = e.traceback + e.failed + e.oom;
   h += `<details><summary>详情：全部子步骤、检索服务、告警（${warn ? `<span class="failed">${warn} 条</span>` : "无"}）、最新日志</summary>`;
   h += `<table class="small"><tr><th>子步骤</th><th>状态</th><th>用时 / 预计</th></tr>` + r.stages.map(s => `<tr><td>${esc(s.label)} <span class="mute">${esc(s.name)}</span></td><td class="${s.state}">${ICON[s.state]} ${({done: "完成", running: "进行中", stalled: "无输出", failed: "失败", pending: "待运行"})[s.state]}</td><td>${s.seconds ? hms(s.seconds) : "预计 " + hms(s.est_seconds)}</td></tr>`).join("") + `</table>`;
-  if (r.retriever) { const q = r.retriever; h += `<p class="small">检索服务（近 ${q.window_seconds}s）：${q.requests_per_second} 次/秒，p50 ${q.p50_ms ?? "—"} ms，p95 ${q.p95_ms ?? "—"} ms，进行中 ${q.in_flight}，错误 ${q.errors_in_window}</p>`; }
+  if (r.retriever) { const q = r.retriever; h += `<p class="small">检索服务（近 ${q.window_seconds}s）：${q.requests_per_second} 次/秒；含排队 p50 ${q.p50_ms ?? "—"} / p95 ${q.p95_ms ?? "—"} ms；` +
+    (q.p50_ms_low_load != null ? `低负载处理时间 p50 ${q.p50_ms_low_load} / p95 ${q.p95_ms_low_load} ms；` : "") + `进行中 ${q.in_flight}，错误 ${q.errors_in_window}</p>`; }
   const pc = Object.entries(r.pool_checks || {}); if (pc.length) h += `<p class="small">题池检查：` + pc.map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "✗"}`).join("，") + `</p>`;
   h += `<p class="small">告警：Traceback ${e.traceback}，FAILED ${e.failed}，显存不足 ${e.oom}，工具名写错 ${e.undefined_function}${uf ? "（" + uf + "）" : ""}</p>`;
   if (e.last_lines && e.last_lines.length) h += `<pre>${esc(e.last_lines.join("\n"))}</pre>`;
@@ -454,7 +455,8 @@ async function loadHistory() {
             lineChart("h-rw-tp", "奖励服务生成吞吐（token/秒）", [{name: "吞吐", xs: rx, ys: rw.map(r => r.gen_throughput)}], {xfmt, xlabel: "时间"});
   }
   for (const [run, rs] of Object.entries(h.retriever || {})) {
-    html += lineChart("h-ret-" + run, `检索延迟（ms）· ${run}`, [{name: "p50", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.p50)}, {name: "p95", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.p95)}], {xfmt, xlabel: "时间", legend: true}) +
+    html += lineChart("h-ret-" + run, `检索延迟（ms）· ${run}：含高峰排队 vs 低负载时的处理时间`, [{name: "p50（含排队）", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.p50)}, {name: "p95（含排队）", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.p95)},
+              {name: "p50（低负载）", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.p50_low ?? null)}, {name: "p95（低负载）", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.p95_low ?? null)}], {xfmt, xlabel: "时间", legend: true}) +
             lineChart("h-rps-" + run, `检索请求（次/秒）与进行中请求数 · ${run}`, [{name: "次/秒", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.rps)}, {name: "进行中", xs: rs.map(r => xm(r.t)), ys: rs.map(r => r.in_flight)}], {xfmt, xlabel: "时间", legend: true});
   }
   $("#c-hist").innerHTML = html;

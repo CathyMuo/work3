@@ -43,6 +43,16 @@ class ProbeTest(unittest.TestCase):
         res = S.summarize([self.sample([5, 5, 5, 5])], None, [], None)
         self.assertIn("没有开启 /metrics", "\n".join(res["verdict"]))
 
+    def test_retriever_queueing_is_not_called_slow(self):
+        retr = {"p50_ms": 405, "p95_ms": 1680, "p50_ms_low_load": 25, "p95_ms_low_load": 60}
+        text = "\n".join(S.summarize([self.sample([5, 5, 5, 5])], None, [], retr)["verdict"])
+        self.assertIn("来自请求排队", text)
+        self.assertNotIn("检索本身可能是瓶颈", text)
+        slow = dict(retr, p95_ms_low_load=800)
+        self.assertIn("检索本身可能是瓶颈", "\n".join(S.summarize([self.sample([5])], None, [], slow)["verdict"]))
+        old = {"p50_ms": 405, "p95_ms": 1680}
+        self.assertIn("不能据此判断", "\n".join(S.summarize([self.sample([5])], None, [], old)["verdict"]))
+
     def test_unreachable_server(self):
         self.assertIsNone(S.reward_metrics(1))
         self.assertIsNone(S.server_info(1))
