@@ -39,7 +39,8 @@ class ProbeTest(unittest.TestCase):
     def test_latency_bound_and_no_metrics(self):
         idle = {"running": 6, "queued": 0, "token_usage_max": 0.2, "gen_throughput": 300, "ranks": 4}
         res = S.summarize([self.sample([5, 5, 5, 5], idle)], None, [], None)
-        self.assertIn("时间花在等待", "\n".join(res["verdict"]))
+        self.assertIn("长尾", "\n".join(res["verdict"]))
+        self.assertIn("分批依次跑只会把各批的尾巴相加", "\n".join(res["verdict"]))
         res = S.summarize([self.sample([5, 5, 5, 5])], None, [], None)
         self.assertIn("没有开启 /metrics", "\n".join(res["verdict"]))
 
