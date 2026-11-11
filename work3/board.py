@@ -532,9 +532,26 @@ def training_fraction(stage: str, bar: Optional[dict]) -> Optional[float]:
     return max(0.0, min(1.0, (bar["n"] - base) / span))
 
 
+def parse_teardown(path: Path) -> Dict[str, dict]:
+    """teardown_warnings.txt: `name exit_code what epoch` -- stages that exited nonzero after their
+    output was completely written (run_p0.sh accepted them and went on)."""
+    out: Dict[str, dict] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2 and parts[1].lstrip("-").isdigit():
+            end = float(parts[-1]) if len(parts) >= 3 and parts[-1].isdigit() else None
+            out[parts[0]] = {"rc": int(parts[1]), "what": parts[2] if len(parts) >= 4 else "", "at": end}
+    return out
+
+
 def stage_rows(run_dir: Path, plan, now: float) -> List[dict]:
     tpath = run_dir / "timings.txt"
     timings = parse_timings(tpath)
+    teardown = parse_teardown(run_dir / "teardown_warnings.txt")
     tmtime = tpath.stat().st_mtime if tpath.exists() else 0.0
     logs = run_dir / "logs"
     rows = []
@@ -555,7 +572,9 @@ def stage_rows(run_dir: Path, plan, now: float) -> List[dict]:
         else:
             state = "pending"
         rows.append({"name": name, "label": label, "state": state, "default_hours": hours,
-                     "seconds": t["seconds"] if t else None, "log_mtime": mtime})
+                     "seconds": t["seconds"] if t else None, "log_mtime": mtime,
+                     "warning": ({"rc": teardown[name]["rc"], "at": teardown[name]["at"]}
+                                 if state == "done" and name in teardown else None)})
     return rows
 
 
@@ -575,7 +594,7 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
     # Duration estimate per stage: observed mean of the same stage type, else the guide's default.
     observed: Dict[str, List[int]] = {}
     for r in rows:
-        if r["state"] == "done" and r["seconds"]:
+        if r["state"] == "done" and r["seconds"] and r["seconds"] >= 0.05 * r["default_hours"] * 3600:
             observed.setdefault(stage_type(r["name"]), []).append(r["seconds"])
     last_end = max((t["end"] for t in parse_timings(run_dir / "timings.txt").values() if t["end"]), default=None)
     for r in rows:
@@ -655,6 +674,8 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
             "est_by_type": {stage_type(r["name"]): r["est_seconds"] for r in rows},
             "lanes": build_lanes(rows, kind, evals, bool(summary)),
             "errors": errors, "evals": evals, "threshold": P0_THRESHOLD,
+            "teardown_warnings": [{"name": r["name"], "label": r["label"], **r["warning"]}
+                                  for r in rows if r.get("warning")],
             "summary": ({k: summary.get(k) for k in ("verdict", "problems", "pooled", "primary",
                                                      "threshold_iter3_average")} if summary else None),
             "retriever": load_json(run_dir / "logs" / "retriever_stats.json"),

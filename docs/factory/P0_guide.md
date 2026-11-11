@@ -1,6 +1,6 @@
 # P0 厂内指导：复现 Dr. Zero Qwen2.5-3B（4×H800）
 
-版本：tag `p0-r10`（2026-11-11：训练阶段在最终检查点完整写完之后才报错退出，视为完成并继续，不再卡住整轮；训练参数与 p0-r8 完全相同）。
+版本：tag `p0-r11`（2026-11-11：所有阶段都改成“退出码不为 0 时先检查产物，完整就继续”；新增无人值守命令 `bash $P0 all`；训练参数与 p0-r8 完全相同）。
 协议（已冻结，不要改）：[research/protocols/P0_drzero_reproduction.md](../../research/protocols/P0_drzero_reproduction.md)，执行以末尾各节 **Addendum** 为准。
 判定：第 3 轮 7 个数据集平均 EM ≥ **0.306** 为 PASS（论文 0.326）。
 
@@ -8,44 +8,49 @@
 
 ---
 
-## 0. 反馈 #7 之后：切到 p0-r10，接着跑第 1 轮（出题者已完成，直接进入题池生成）
+## 0. 反馈 #8 之后：切到 p0-r11，用 `bash $P0 all` 无人值守跑完 P0
 
-第 1 轮出题者 50 步已经跑完，`global_step_50` 完整。退出码 1 来自训练结束之后的收尾阶段，和最终校验无关：
+题池生成和反馈 #7 的出题者一样：产物写完整之后，进程被 SIGKILL，退出码 137。r10 只给训练阶段做了产物检查，r11 把它推广到**所有阶段**。
 
-- 出题者设置的是 `trainer.test_freq=-1`，整个训练一次校验都不跑。
-- `Final validation metrics: None` 是 verl 在最后一步无条件打印的一行，不是报错，所以也不需要“跳过最终校验”的开关。
-- 报错的那个 DataLoader 子进程，只是训练集的预取进程。它在检查点写完之后、trainer 退出时被 SIGKILL 杀掉，于是 TaskRunner 抛错，整个进程以 1 退出。
-- 这时产物已经完整，P0 判定用的是独立的 eval，不受影响。
+**规则**：任何阶段退出码不为 0，都先检查它的产物。
 
-p0-r10 的改动只在流程控制上，训练参数和 p0-r8 逐字相同：
+- 产物**完整且是本次运行写出的**：打一条 WARNING，记进 `teardown_warnings.txt`，看板上标“⚠ 收尾报错”，然后接着跑。
+- 产物不完整：照旧停下。
 
-- 出题者或解题者退出码不为 0 时，先检查**最终检查点是否完整**，三项都要满足：
-  - `latest_checkpointed_iteration.txt` 等于最后一步；
-  - 每张卡的 model / optim / extra_state 分片都在；
-  - `data.pt` 和 `huggingface/config.json` 都在。
-- 检查点完整时：打 WARNING 并记入 `teardown_warnings.txt`，看板上记为完成，接着跑后面的阶段。
-- 检查点不完整时：照旧停下。
-- 重跑时，“跳过已完成的训练”也改成按同样的标准判断：只看见 `global_step_N/actor` 目录、但里面没写完，不算完成，会接着训练。
-- 清理进程后，如果卡上还有不带本次标记、却像是 SGLang / Ray / verl 的进程（占用 ≥4 GB），会打印它的 PID 和命令行。脚本不会杀它。
+| 阶段 | “产物完整”的标准 |
+|---|---|
+| 出题者 / 解题者训练 | `latest_checkpointed_iteration.txt` = 最后一步；每张卡的 model / optim / extra_state 分片都在且非空；`data.pt`、`huggingface/config.json` 都在 |
+| 题池生成 | parquet 能被完整读出（写到一半被杀的文件读不出来）；行数 > 0；`prompt` / `data_source` / `reward_model` 没有空值 |
+| 题池检查 | 结果 json 存在，并且 `ok` 为 **true** |
+| 转 HF | `config.json` 在；`model.safetensors.index.json` 里列出的每个分片都在且非空 |
+| 评测 | dump 逐行可解析；每个数据集的题数都等于 `data/test.parquet` 里的题数（共 51,713） |
+
+- **“本次写出”**：出错后放行时，产物的修改时间必须晚于本阶段开始的时间。这样可以防止一个刚启动就死掉的阶段，靠上次留下的旧产物被误放行。
+- **题池检查不放行 `ok=false`**：没采纳“有结果就算完成”。题池不合格时，继续训练解题者整晚都白跑，P0 也会判为无效，所以必须停下。题池检查是普通的 Python 脚本，不涉及 Ray / SGLang 的收尾，不会遇到这类问题。
+- **跳过已完成的阶段**：重跑时用同一套标准判断，评测也会跳过已经完整的。只有目录或文件存在、但内容没写完的，会重新跑。要强制重跑，加 `FORCE=1`。
+- **退出码不为 0 时的现场记录**：日志末尾会追加 `[p0 diag]` 几行，包括信号编号、cgroup 的 memory.events / current / max / peak、dmesg 里的 OOM 记录（有权限时）和 `free -g`。下次出现时请把这几行发回，用来查是谁发的 SIGKILL。
+
+**无人值守**：`bash $P0 all` 依次跑 iter1 → eval1 → iter2 → eval2 → iter3 → eval3 → eval0 → gate。
+
+- 已完成的阶段自动跳过。
+- 某个阶段真正失败时，会先 cleanup，等 60 秒，从停下的地方再试 1 次。还失败才停下。次数用 `MAX_ATTEMPTS` 设置，默认 2。
+- 只想跑其中几段，可以这样写：`ALL_STAGES="iter1 eval1" bash $P0 all`。
 
 ```bash
 cd <工作目录>/work3
-git fetch --tags && git checkout p0-r10
-bash $P0 cleanup   # 看最后几行：有 "WARNING untagged GPU process" 就按下面处理残留进程
-nvidia-smi         # 确认 48–53 GB 的残留 sglang 已经没了
-bash $P0 iter1     # 日志应有 "skip iter1_challenger: final checkpoint complete"，然后直接开始 iter1_gen_data
+git fetch --tags && git checkout p0-r11
+bash $P0 cleanup
+tmux new -s p0      # 在 tmux 里跑，断开 ssh 也不受影响
+bash $P0 all 2>&1 | tee -a $DRZERO_DIR/work3_p0/all.log
 ```
 
-- **残留的 sglang（48–53 GB）**：先确认它属于工作3：
-  ```bash
-  tr '\0' ' ' < /proc/<PID>/cmdline
-  tr '\0' '\n' < /proc/<PID>/environ | grep WORK3
-  ```
-  命令行里应有 drzero 目录、Qwen2.5-3B 或 8101 端口。确认后 `kill <PID>`，不行再 `kill -9 <PID>`。不要动工作2的 :8000 检索服务。卡 0 没有余量，残留不清掉，下一阶段一定 OOM。
-- 不需要重新 `patch`：p0-r10 生成的补丁脚本和 r8/r9 完全相同。
-- **第 2、3 轮和解题者也可能在同一位置报同样的错**：收尾路径相同，而且是否触发不稳定。r10 会自动判断并继续，不用手动重跑。每遇到一次，`teardown_warnings.txt` 就多一行，请随结果一起发回。
-- cgroup 的 `memory.events` 里 `max` 计数很大、但 `oom_kill` 为 0：这是页缓存（检查点写盘、语料）顶到 720 GB 上限后被回收，属于正常现象，不用处理。
-- **真正的崩溃**（检查点不完整，日志里有 `[p0 ckpt] ... missing`）：先 `bash $P0 cleanup`，再原样重跑 `bash $P0 iter1`，训练会从最近的完整检查点继续。要强制重跑，加 `FORCE=1`。
+- 现在会依次看到：
+  - `skip iter1_challenger: output complete`
+  - `skip iter1_gen_data: output complete`
+  - 进入 `iter1_pool_check`
+- 不需要重新 `patch`：补丁脚本和 r8–r10 完全相同。
+- **看板要重启**才能看到“⚠ 收尾报错”标记：Ctrl-C 后重新运行 `run_board.sh`。
+- **请顺带核对一件事**：反馈里 `iter1_gen_data  7  137  1794360721` 的第二列是本次运行的秒数，也就是这一次只跑了 7 秒；结束时间 1794360721 是 11-11 09:32（北京时间），不是 14:18。7 秒不可能生成 3.4 万道题，说明这个 parquet 应该是更早一次运行写出的。请把 `timings.txt` 全文、`logs/iter1_gen_data.log` 的前 40 行和后 80 行、parquet 的修改时间（`ls -l --time-style=full-iso data/zero_challenger_iter1_*.parquet`）发回。题池本身已经核对过行数和 hop 分布，可以直接使用；r11 的跳过逻辑只看内容完整，不看是哪次运行写的。
 
 ## 1. 开跑前：停掉显卡保活程序
 
@@ -125,14 +130,12 @@ P0=<工作目录>/work3/scripts/p0/run_p0.sh
 bash $P0 check
 bash $P0 prepare    # 已完成的话跳过
 bash $P0 patch
-bash $P0 iter1 ; bash $P0 eval1
-bash $P0 iter2 ; bash $P0 eval2
-bash $P0 iter3 ; bash $P0 eval3
-bash $P0 eval0      # 基座模型，只作参考
-bash $P0 gate       # 写 work3_p0/p0_summary.json
+bash $P0 all        # = iter1 eval1 iter2 eval2 iter3 eval3 eval0 gate；已完成的跳过，失败自动重试 1 次
 ```
 
-每一步失败都会停下，日志在 `work3_p0/logs/<阶段>.log`。`timings.txt` 现在每行是“阶段 秒数 退出码 结束时间”。
+也可以一步一步跑：`bash $P0 iter1`、`bash $P0 eval1`、……、`bash $P0 eval0`（基座模型，只作参考）、`bash $P0 gate`（写 `work3_p0/p0_summary.json`）。
+
+真正失败（产物不完整）时会停下，日志在 `work3_p0/logs/<阶段>.log`。`timings.txt` 现在每行是“阶段 秒数 退出码 结束时间”。
 
 **上游的三个坑，`p0-r2` 已经替你处理**：
 1. 检索服务对不带 `"return_scores": true` 的请求一律返回 500：上游代码无条件解包两个返回值。凡是自己手动测检索服务，请求里都必须带这个字段。

@@ -3,8 +3,8 @@
   "project": "work3",
   "updated_at": "2026-11-11",
   "current_stage": "P0",
-  "status": "P0 iteration-1 proposer finished 50/50 steps on p0-r8 (micro-batch 1: memory flat at 59 GB, reward 0.128 -> 0.616) and saved a complete global_step_50, but the process then exited 1: a train-DataLoader prefetch worker was SIGKILLed while the trainer shut down (no validation runs; test_freq=-1). p0-r10 treats a nonzero exit after a complete final checkpoint as done and continues.",
-  "next_action": "Factory: checkout p0-r10, cleanup (and remove the leftover 48-53 GB sglang), re-run iter1; it skips the finished proposer and starts question-pool generation. Home: review iteration-1 results.",
+  "status": "P0 iteration 1: proposer done; question pool generated (33,923 rows, hop split 4:3:2:1) but the stage exited 137 (SIGKILL) after writing it, like the proposer before. p0-r11 checks every stage's output (checkpoint, pool, pool check, HF model, eval dump; written by this run) before treating a nonzero exit as failure, and adds `run_p0.sh all` for unattended runs with one retry per stage.",
+  "next_action": "Factory: checkout p0-r11, cleanup, `bash $P0 all` in tmux (skips the finished proposer and pool). Send timings.txt and the gen_data log head/tail (the 7-second line). Home: review iteration-1 results.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -29,7 +29,7 @@
   "upstreams": {
     "drzero": "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
   },
-  "p0_release": "p0-r10",
-  "p1_release": "p1-r10",
-  "p2_release": "p2-r10"
+  "p0_release": "p0-r11",
+  "p1_release": "p1-r11",
+  "p2_release": "p2-r11"
 }

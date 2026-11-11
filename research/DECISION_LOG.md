@@ -415,3 +415,49 @@ Decision: `BOARD_STEP_ETA_R9`.
 Training settings are identical to r8.
 
 Decision: `TEARDOWN_EXIT_TOLERATED_R10`.
+
+## 2026-11-11: Output checks for every P0 stage, and an unattended `all` command (tags `p0-r11`, `p1-r11`, `p2-r11`)
+
+**What happened (factory feedback #8).** On p0-r10 the iteration-1
+question-pool stage exited 137 (SIGKILL). Its pool was complete: 33,923 rows,
+hop split 40/30/20/10. r10 had covered only the training stages, so the run
+stopped again. The user requires that unattended overnight runs never stop on
+such teardown noise.
+
+**Decision.**
+
+- **Shared output checks.** `work3/stage_check.py` checks the output of each
+  stage kind:
+  - **checkpoint:** the tracker, every rank shard, `data.pt` and the HF config;
+  - **pool:** the parquet reads in full, has rows, and has no empty prompt,
+    data_source or answer;
+  - **pool check:** the result JSON has `ok` true;
+  - **HF model:** the config and every indexed shard;
+  - **eval dump:** it parses, and its per-source counts equal those of
+    `data/test.parquet`.
+- **`run_p0.sh checked`.** Every stage of an iteration and every evaluation
+  runs through `checked`. A nonzero exit continues only when the check passes
+  and the output was written after the stage started (`--since`). Such exits
+  go to `teardown_warnings.txt`.
+- **Skipping on a re-run.** Re-runs skip on the same checks instead of "the
+  file exists". Evaluations are now skipped when complete.
+- **Diagnostics.** A nonzero exit appends signal, cgroup memory and dmesg OOM
+  lines to the stage log, to find the SIGKILL's source.
+- **`run_p0.sh all`.** It runs iter1 eval1 iter2 eval2 iter3 eval3 eval0 gate
+  and retries a failing stage once after cleanup (`MAX_ATTEMPTS`).
+- **Board.** It marks such stages "⚠ 收尾报错", lists them, and ignores
+  durations under 5% of a stage's default when estimating ETAs. The factory's
+  pool line recorded only 7 s.
+
+**Not adopted.** A pool check counts as done only when it passed, not "has a
+result". Training a solver on a pool that failed its check would waste the
+night and make P0 invalid.
+
+**Open question.** The factory's timings line `iter1_gen_data 7 137
+1794360721` says this attempt ran only 7 s and ended at 09:32 CST. The pool must
+therefore come from an earlier attempt. The full timings file and log were
+requested.
+
+Training settings are identical to r8.
+
+Decision: `STAGE_OUTPUT_CHECKS_R11`.

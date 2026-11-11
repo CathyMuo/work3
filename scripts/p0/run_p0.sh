@@ -4,6 +4,8 @@
 #
 # Usage: bash scripts/p0/run_p0.sh <stage>
 #   check | prepare | patch | iter1 | iter2 | iter3 | eval0 | eval1 | eval2 | eval3 | gate | cleanup | probe
+#   all   (unattended: iter1 eval1 iter2 eval2 iter3 eval3 eval0 gate; finished stages are skipped,
+#          a failed stage is retried once from where it stopped -- MAX_ATTEMPTS, ALL_STAGES)
 #
 # Required env:
 #   DRZERO_DIR    Dr. Zero checkout at the pinned commit (data/, corpus/, checkpoints/ live here)
@@ -133,14 +135,27 @@ PY
 timed_rc() {  # timed_rc <name> <cmd...>: run tagged, tee log, record wall-clock seconds, clean up; returns the exit code
   local name="$1"; shift
   local t0; t0=$(date +%s)
+  STAGE_T0="$t0"   # outputs accepted after a nonzero exit must be written after this
   log "start $name"
   set +e
   ( export WORK3_P0_TAG="$TAG"; "$@" ) 2>&1 | tee "$OUT_ROOT/logs/$name.log"
   local rc=${PIPESTATUS[0]}
   set -e
   echo "$name $(( $(date +%s) - t0 )) $rc $(date +%s)" >> "$OUT_ROOT/timings.txt"   # name seconds exit end
+  [ "$rc" -eq 0 ] || exit_diag "$rc" >> "$OUT_ROOT/logs/$name.log" 2>&1
   cleanup_servers
   return "$rc"
+}
+
+exit_diag() {  # exit_diag <rc>: who might have killed it? (appended to the stage log)
+  echo "[p0 diag] exit code $1$( [ "$1" -gt 128 ] && echo " = signal $(( $1 - 128 ))" ) at $(date '+%F %T')"
+  local cg=/sys/fs/cgroup
+  for f in memory.events memory.current memory.max memory.peak; do
+    [ -r "$cg/$f" ] && echo "[p0 diag] cgroup $f: $(tr '\n' ' ' < "$cg/$f")"
+  done
+  dmesg -T 2>/dev/null | grep -iE "killed process|out of memory|oom" | tail -n 5 | sed 's/^/[p0 diag] dmesg: /'
+  free -g 2>/dev/null | sed 's/^/[p0 diag] /'
+  return 0
 }
 
 finish_stage() {  # finish_stage <name> <rc>
@@ -154,35 +169,13 @@ timed() {  # timed <name> <cmd...>: timed_rc, and stop the whole run on a nonzer
   finish_stage "$1" "$rc"
 }
 
-# A training stage's product is its final checkpoint. verl writes the actor shards on every rank,
-# then data.pt, then latest_checkpointed_iteration.txt last, so a tracker that names the final step
-# plus every shard present means the checkpoint is complete.
-ckpt_complete() {  # ckpt_complete <ckpt_dir> <step>
-  python3 - "$1" "$2" "$NGPU" <<'PY'
-import os, sys
-d, step, ngpu = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
-g = os.path.join(d, f"global_step_{step}")
-actor = os.path.join(g, "actor")
-problems = []
-try:
-    with open(os.path.join(d, "latest_checkpointed_iteration.txt")) as f:
-        latest = f.read().strip()
-    if latest != str(step):
-        problems.append(f"latest_checkpointed_iteration.txt says {latest!r}, expected {step}")
-except OSError:
-    problems.append("latest_checkpointed_iteration.txt missing")
-for kind in ("model", "optim", "extra_state"):
-    for r in range(ngpu):
-        f = os.path.join(actor, f"{kind}_world_size_{ngpu}_rank_{r}.pt")
-        if not (os.path.isfile(f) and os.path.getsize(f) > 0):
-            problems.append(f"missing or empty {os.path.relpath(f, d)}")
-for f in (os.path.join(g, "data.pt"), os.path.join(actor, "huggingface", "config.json")):
-    if not os.path.isfile(f):
-        problems.append(f"missing {os.path.relpath(f, d)}")
-for line in problems[:6]:
-    print(f"[p0 ckpt] {os.path.basename(d)}: {line}", flush=True)
-sys.exit(1 if problems else 0)
-PY
+# Every stage's product can be checked for completeness (work3/stage_check.py): a checkpoint
+# (tracker names the final step, all rank shards, data.pt, HF config), a question pool (readable
+# parquet, no empty prompt / data_source / answer), a passed pool check, a converted HF model
+# (config + every listed weight shard) and an evaluation dump (every test question of every
+# data source). With --since, output written before the stage started never counts.
+output_complete() {  # output_complete <kind> <args...>
+  python -m work3.stage_check ${STAGE_T0:+--since "$STAGE_T0"} "$@"
 }
 
 settle_timing() {  # settle_timing <name>: a stage whose final checkpoint is complete must not stay "failed"
@@ -202,30 +195,36 @@ if rows and len(rows[-1]) >= 3 and rows[-1][2] != "0":
 PY
 }
 
-train_stage() {  # train_stage <name> <ckpt_dir> <final_step> <cmd...>
-  # Like timed, but a nonzero exit AFTER the final checkpoint was completely written is a teardown
-  # error, not a failed stage: warn, record it in teardown_warnings.txt, and carry on.
-  local name="$1" dir="$2" step="$3"; shift 3
+checked() {  # checked <name> <kind> <check args...> -- <cmd...>
+  # Like timed, but a nonzero exit AFTER the stage's output was completely written (an error or a
+  # SIGKILL while the process shut down; factory feedback #7, #8) is not a failure: warn, record it
+  # in teardown_warnings.txt and carry on. Incomplete output still stops the run.
+  local name="$1" kind="$2"; shift 2
+  local cargs=()
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do cargs+=("$1"); shift; done
+  [ "${1:-}" = "--" ] || { log "checked: missing -- before the command"; exit 2; }
+  shift
   local rc=0
   timed_rc "$name" "$@" || rc=$?
-  if [ "$rc" -ne 0 ] && ckpt_complete "$dir" "$step"; then
-    log "WARNING $name exited $rc after its final checkpoint global_step_$step was completely written (an error while the trainer shut down; see logs/$name.log); continuing"
-    echo "$name $rc global_step_$step $(date +%s)" >> "$OUT_ROOT/teardown_warnings.txt"
+  if [ "$rc" -ne 0 ] && output_complete "$kind" "${cargs[@]}"; then
+    log "WARNING $name exited $rc after its output was completely written ($kind check passed; an error while the process shut down, see logs/$name.log); continuing"
+    echo "$name $rc $kind $(date +%s)" >> "$OUT_ROOT/teardown_warnings.txt"
     settle_timing "$name"
     rc=0
   fi
+  STAGE_T0=""
   finish_stage "$name" "$rc"
 }
 
-skip_trained() {  # skip_trained <name> <ckpt_dir> <final_step>: true if the final checkpoint is complete
+skip_complete() {  # skip_complete <name> <kind> <check args...>: true if the output is complete
   [ "${FORCE:-0}" = "1" ] && return 1
-  [ -e "$2/global_step_$3/actor" ] || return 1
-  if ckpt_complete "$2" "$3"; then
-    log "skip $1: final checkpoint complete ($2/global_step_$3); FORCE=1 re-runs it"
-    settle_timing "$1"
+  local name="$1"; shift
+  if STAGE_T0="" output_complete "$@" > /dev/null; then
+    log "skip $name: output complete ($1 check); FORCE=1 re-runs it"
+    settle_timing "$name"
     return 0
   fi
-  log "$1: global_step_$3 exists but is incomplete; training again from the latest complete checkpoint"
+  log "$name: no complete output yet, running it"
   return 1
 }
 
@@ -442,13 +441,6 @@ convert_solver() {  # convert_solver <t>
     --local_dir "$base/global_step_50/actor" --target_dir "$base/solver_iter$1_hf"
 }
 
-skip_done() {  # skip_done <name> <artifact>: true (and logs) if the sub-stage's output already exists
-  if [ "${FORCE:-0}" != "1" ] && [ -e "$2" ]; then
-    log "skip $1: output already present ($2); FORCE=1 re-runs it"
-    return 0
-  fi
-  return 1
-}
 
 stage_iter() {  # stage_iter <t>; re-running it after a crash resumes where it stopped
   local t="$1"
@@ -460,22 +452,26 @@ stage_iter() {  # stage_iter <t>; re-running it after a crash resumes where it s
     need "$CKPT/solver_iter$((t-1))_ratio${RATIO}_grpo_group5_${MODEL_NAME}/solver_iter$((t-1))_hf/config.json"
   fi
   cleanup_servers
-  if ! skip_trained "iter${t}_challenger" "$chal" "$((50 * t))"; then
+  if ! skip_complete "iter${t}_challenger" ckpt "$chal" "$((50 * t))" "$NGPU"; then
     # iterations 2-3 normally start from the previous iteration's checkpoint; if this iteration
     # already saved its own (a crash), continue from the latest one instead
     if [ "$t" -gt 1 ] && ls -d "$chal"/global_step_* >/dev/null 2>&1; then
       export WORK3_RESUME_MODE=auto
       log "iter${t}_challenger: resuming from its own latest checkpoint"
     fi
-    train_stage "iter${t}_challenger" "$chal" "$((50 * t))" \
+    checked "iter${t}_challenger" ckpt "$chal" "$((50 * t))" "$NGPU" -- \
       bash "$PATCHED/iter${t}_challenger.sh" "$RATIO" "trainer.total_training_steps=$((50 * t))"
     unset WORK3_RESUME_MODE
   fi
-  skip_done "iter${t}_gen_data" "$pool" || timed "iter${t}_gen_data" bash "$PATCHED/iter${t}_gen_data.sh" "$RATIO"
-  timed "iter${t}_pool_check" python -m work3.pool_check "$pool" --out "$OUT_ROOT/pool_check_iter${t}.json"
-  skip_trained "iter${t}_solver" "$solv" 50 ||
-    train_stage "iter${t}_solver" "$solv" 50 bash "$PATCHED/iter${t}_solver.sh" "$RATIO" "trainer.total_training_steps=50"
-  skip_done "iter${t}_convert" "$solv/solver_iter${t}_hf/config.json" || timed "iter${t}_convert" convert_solver "$t"
+  skip_complete "iter${t}_gen_data" pool "$pool" ||
+    checked "iter${t}_gen_data" pool "$pool" -- bash "$PATCHED/iter${t}_gen_data.sh" "$RATIO"
+  checked "iter${t}_pool_check" pool_check "$OUT_ROOT/pool_check_iter${t}.json" -- \
+    python -m work3.pool_check "$pool" --out "$OUT_ROOT/pool_check_iter${t}.json"
+  skip_complete "iter${t}_solver" ckpt "$solv" 50 "$NGPU" ||
+    checked "iter${t}_solver" ckpt "$solv" 50 "$NGPU" -- \
+      bash "$PATCHED/iter${t}_solver.sh" "$RATIO" "trainer.total_training_steps=50"
+  skip_complete "iter${t}_convert" hf "$solv/solver_iter${t}_hf" ||
+    checked "iter${t}_convert" hf "$solv/solver_iter${t}_hf" -- convert_solver "$t"
 }
 
 start_retriever() {
@@ -523,7 +519,26 @@ stage_eval() {  # stage_eval <t>
   if [ "$t" = 0 ]; then model="$MODEL_3B"
   else model="$DRZERO_DIR/$CKPT/solver_iter${t}_ratio${RATIO}_grpo_group5_${MODEL_NAME}/solver_iter${t}_hf"; fi
   cleanup_servers
-  timed "eval${t}" eval_model "$t" "$model"
+  skip_complete "eval${t}" eval "$OUT_ROOT/eval/iter$t" data/test.parquet && return 0
+  checked "eval${t}" eval "$OUT_ROOT/eval/iter$t" data/test.parquet -- eval_model "$t" "$model"
+}
+
+stage_all() {  # unattended: every remaining P0 stage in order; finished stages are skipped
+  local s attempt max="${MAX_ATTEMPTS:-2}"
+  for s in ${ALL_STAGES:-iter1 eval1 iter2 eval2 iter3 eval3 eval0 gate}; do
+    attempt=1
+    until bash "$WORK3_DIR/scripts/p0/run_p0.sh" "$s"; do
+      if [ "$attempt" -ge "$max" ]; then
+        log "all: $s failed $attempt time(s); stopping (logs in $OUT_ROOT/logs)"
+        exit 1
+      fi
+      attempt=$((attempt + 1))
+      log "all: $s failed; cleaning up and retrying from where it stopped (attempt $attempt of $max)"
+      cleanup_servers
+      sleep 60
+    done
+  done
+  log "all: P0 finished; summary $OUT_ROOT/p0_summary.json"
 }
 
 stage_gate() {
@@ -550,6 +565,7 @@ case "${1:-}" in
   iter1|iter2|iter3) stage_iter "${1#iter}" ;;
   eval0|eval1|eval2|eval3) stage_eval "${1#eval}" ;;
   gate) stage_gate ;;
+  all) stage_all ;;
   cleanup) cleanup_servers ;;
   probe)   # read-only speed diagnosis of whatever stage is running now (factory feedback #3)
     python -m work3.speed_probe --seconds "${PROBE_SECONDS:-120}" --reward-port "$REWARD_PORT" \

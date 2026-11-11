@@ -247,3 +247,29 @@ Such exits are logged to `teardown_warnings.txt`. Skipping a finished stage on
 a re-run uses the same check.
 
 No training setting, data, or gate changes.
+
+## Addendum 2026-11-11 (b): output checks for every stage (factory feedback #8)
+
+Question-pool generation also exited nonzero (137, SIGKILL) after writing a
+complete pool. From p0-r11 the rule of the previous addendum applies to every
+stage: a nonzero exit counts as completed only if the stage's output is
+complete and was written by this run.
+
+The output checks per stage:
+
+- **Proposer and solver:** the checkpoint check of the previous addendum.
+- **Question-pool generation:** the pool parquet reads in full and has rows,
+  with no empty `prompt`, `data_source` or `reward_model`.
+- **Pool check:** its JSON exists with `ok` true. A failing pool check still
+  stops the run.
+- **Conversion:** `config.json` and every listed weight shard are present.
+- **Evaluation:** the dump parses line by line and holds exactly the per-source
+  counts of `data/test.parquet`.
+
+Re-runs skip a stage whose output passes the same check. This now includes
+evaluation.
+
+`run_p0.sh all` runs the remaining stages in order. It retries a failed stage
+once, resuming from where it stopped.
+
+No training setting, data, or gate changes.
