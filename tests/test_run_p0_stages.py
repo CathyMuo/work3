@@ -146,6 +146,25 @@ class StageWrapperTest(unittest.TestCase):
         r = self.bash(f'skip_complete iter1_convert hf "{hf}" && echo SKIPPED || echo RERUN')
         self.assertIn("RERUN", r.stdout)
 
+    def test_background_server_does_not_hold_the_stage(self):
+        # upstream scripts start the retriever / reward server with `&` and never stop them;
+        # up to r11 those kept the log pipe open and the stage never returned (feedback #9)
+        t0 = time.time()
+        r = self.bash('timed iter1_gen_data bash -c "echo started; sleep 40 > /dev/null 2>&1 < /dev/null & '
+                      'sleep 40 & echo main-done"; echo AFTER')
+        self.assertLess(time.time() - t0, 20, r.stdout + r.stderr)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("AFTER", r.stdout)
+        self.assertIn("main-done", (self.out / "logs/iter1_gen_data.log").read_text())
+        subprocess.run(["pkill", "-f", "^sleep 40$"])
+
+    def test_one_orchestrator_per_output_dir(self):
+        r = self.bash('( take_lock; sleep 4 ) & sleep 1; take_lock; echo GOT')
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertIn("another run_p0.sh is already running", r.stdout)
+        self.assertIn("GOT", self.bash("take_lock; echo GOT").stdout)
+        self.assertIn("GOT", self.bash("take_lock; echo GOT", WORK3_P0_LOCK_HELD="1").stdout)
+
     def test_ordinary_failure_still_stops(self):
         r = self.bash('timed iter1_gen_data bash -c "exit 3"; echo AFTER')
         self.assertEqual(r.returncode, 3)
@@ -153,6 +172,20 @@ class StageWrapperTest(unittest.TestCase):
 
     def timings(self):
         return parse_timings(self.out / "timings.txt")
+
+
+class EffectiveSecondsTest(unittest.TestCase):
+    def test_hung_stage_time_is_replaced_by_log_evidence(self):
+        from work3.board import effective_seconds
+        with tempfile.TemporaryDirectory() as d:
+            run = Path(d)
+            (run / "logs").mkdir()
+            (run / "logs/iter1_challenger.log").write_text(
+                "".join(f"step:{i} - critic/score/mean:0.5 - timing_s/step:500.0\n" for i in range(21, 51)))
+            row = {"name": "iter1_challenger", "state": "done", "seconds": 66706, "default_hours": 8.0}
+            self.assertEqual(effective_seconds(row, run), 50 * 500 + 600)
+            row["seconds"] = 30000                       # plausible: kept as recorded
+            self.assertEqual(effective_seconds(row, run), 30000)
 
 
 @unittest.skipUnless(HAVE_PANDAS, "pandas not installed")

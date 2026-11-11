@@ -461,3 +461,48 @@ requested.
 Training settings are identical to r8.
 
 Decision: `STAGE_OUTPUT_CHECKS_R11`.
+
+## 2026-11-11: Root cause of the stalled P0 run: background servers held the stage's log pipe (tags `p0-r12`, `p1-r12`, `p2-r12`)
+
+**Evidence.** Factory feedback #9 sent `timings.txt`, the question-pool log
+and the pool's mtime. They show:
+
+- **Proposer.** It finished at 11-10 19:54 with exit code 0. The stage was
+  recorded only at 11-11 09:31:54, 66,706 s after it started. Feedback #7's
+  "exit 1" was a misreading of a Ray teardown traceback. The "leftover
+  48–53 GB SGLang" was the proposer-reward server, still running.
+- **Question pool.** It was written at 14:18 after a 4 h 32 min generation,
+  and recorded at 15:28:33.
+- **Two short-lived next stages.** Each time, the next stage died 7 s
+  (generation, 09:32) or 4 s (solver, 15:28) after the stage before it ended,
+  with exit 137. That is the SIGKILL pass of a manual `run_p0.sh cleanup`
+  started 10 s earlier.
+
+**Cause.** The upstream scripts launch their retriever and reward server with
+`&` and never stop them. `timed` ran `cmd | tee log`. The background servers
+inherited the pipe, so `tee`, and with it the stage, waited until they died.
+The factory's cleanup killed the servers. That released the stalled
+orchestrator, which started its next stage just in time for the same cleanup's
+SIGKILL.
+
+**Decision.**
+
+- **No pipe.** Stages write straight to their log file, and the console
+  follows it with `tail -f`. A regression test leaves a background process
+  running and requires the stage to return immediately. r11's code waits for
+  that process.
+- **`cleanup` stops orchestrators first.** It SIGKILLs other `run_p0.sh`
+  stage runs for the same `DRZERO_DIR` before killing tagged processes.
+- **One orchestrator per output directory.** A `flock` lock enforces it.
+  Children of `all` share the parent's lock, and stage processes do not
+  inherit the lock fd.
+- **Board.** Recorded durations above 1.5× a stage's default are replaced by
+  the log's evidence: 50 × mean step time, or the finished progress bar's
+  elapsed time, plus 10 minutes. This is for the ETA estimates.
+
+**Earlier releases.** The r10 and r11 output checks stay as a safety net.
+They were not the cause.
+
+Training settings are identical to r8.
+
+Decision: `NO_PIPE_STAGE_LOGS_R12`.

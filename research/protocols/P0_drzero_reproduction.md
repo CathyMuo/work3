@@ -273,3 +273,21 @@ evaluation.
 once, resuming from where it stopped.
 
 No training setting, data, or gate changes.
+
+## Addendum 2026-11-11 (c): stages no longer hang after finishing (factory feedback #9)
+
+The upstream scripts start their servers in the background and leave them
+running. Up to p0-r11 `run_p0.sh` piped each stage through `tee`. The servers
+kept that pipe open, so a finished stage never returned until someone killed
+them. The exits recorded in feedback #7 and #8 were side effects of that
+manual cleanup, not training or generation failures: the iteration-1
+proposer's own exit code was 0.
+
+From p0-r12:
+
+- stages log straight to a file;
+- `cleanup` first stops running `run_p0.sh` processes for the same Dr. Zero
+  directory;
+- only one `run_p0.sh` may run per output directory.
+
+No training setting, data, or gate changes.

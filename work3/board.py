@@ -578,6 +578,25 @@ def stage_rows(run_dir: Path, plan, now: float) -> List[dict]:
     return rows
 
 
+def effective_seconds(row: dict, run_dir: Path) -> Optional[float]:
+    """A stage's own working time, for ETAs. Up to r11 a finished stage could sit for hours
+    before it was recorded (its background servers held the log pipe open), so a recorded time
+    far above the default is replaced by the log's evidence: 50 x the mean step time for
+    training, or the elapsed time of the finished progress bar, plus 10 minutes of start-up."""
+    sec = row.get("seconds")
+    if row.get("state") != "done" or not sec or sec <= 1.5 * row["default_hours"] * 3600:
+        return sec
+    text = tail_text(run_dir / "logs" / f"{row['name']}.log")
+    times = [m["timing_s/step"] for m in step_metrics(text) if "timing_s/step" in m]
+    if times and re.search(r"_(challenger|solver)$", row["name"]):
+        derived = 50 * sum(times) / len(times) + 600
+    else:
+        done = [b["elapsed_s"] for b in tqdm_progress(text).values()
+                if b.get("total") and b.get("n") == b.get("total") and b.get("elapsed_s")]
+        derived = max(done) + 600 if done else None
+    return min(sec, derived) if derived else sec
+
+
 def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: float) -> dict:
     rows = stage_rows(run_dir, plan, now)
     active = next((r for r in rows if r["state"] in ("running", "stalled", "failed")), None)
@@ -594,8 +613,11 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
     # Duration estimate per stage: observed mean of the same stage type, else the guide's default.
     observed: Dict[str, List[int]] = {}
     for r in rows:
-        if r["state"] == "done" and r["seconds"] and r["seconds"] >= 0.05 * r["default_hours"] * 3600:
-            observed.setdefault(stage_type(r["name"]), []).append(r["seconds"])
+        r["effective_seconds"] = effective_seconds(r, run_dir)
+    for r in rows:
+        sec = r["effective_seconds"]
+        if r["state"] == "done" and sec and sec >= 0.05 * r["default_hours"] * 3600:
+            observed.setdefault(stage_type(r["name"]), []).append(sec)
     last_end = max((t["end"] for t in parse_timings(run_dir / "timings.txt").values() if t["end"]), default=None)
     for r in rows:
         typ = stage_type(r["name"])

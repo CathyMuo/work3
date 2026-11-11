@@ -132,15 +132,23 @@ for line in q.splitlines():
 PY
 }
 
-timed_rc() {  # timed_rc <name> <cmd...>: run tagged, tee log, record wall-clock seconds, clean up; returns the exit code
+timed_rc() {  # timed_rc <name> <cmd...>: run tagged, log, record wall-clock seconds, clean up; returns the exit code
   local name="$1"; shift
   local t0; t0=$(date +%s)
   STAGE_T0="$t0"   # outputs accepted after a nonzero exit must be written after this
+  local logf="$OUT_ROOT/logs/$name.log"
   log "start $name"
+  # The stage writes straight to its log file and the console follows it with `tail -f`. No pipe:
+  # upstream scripts leave servers running in the background, and with `cmd | tee` those servers
+  # held the pipe open, so the stage never returned after its script had ended (feedback #7-#9).
+  : > "$logf"
+  tail -n +1 -f "$logf" &
+  local tailpid=$!
   set +e
-  ( export WORK3_P0_TAG="$TAG"; "$@" ) 2>&1 | tee "$OUT_ROOT/logs/$name.log"
-  local rc=${PIPESTATUS[0]}
+  ( exec 8>&-; export WORK3_P0_TAG="$TAG"; "$@" ) >> "$logf" 2>&1 < /dev/null
+  local rc=$?
   set -e
+  sleep 1; kill "$tailpid" 2>/dev/null || true; wait "$tailpid" 2>/dev/null || true
   echo "$name $(( $(date +%s) - t0 )) $rc $(date +%s)" >> "$OUT_ROOT/timings.txt"   # name seconds exit end
   [ "$rc" -eq 0 ] || exit_diag "$rc" >> "$OUT_ROOT/logs/$name.log" 2>&1
   cleanup_servers
@@ -156,6 +164,56 @@ exit_diag() {  # exit_diag <rc>: who might have killed it? (appended to the stag
   dmesg -T 2>/dev/null | grep -iE "killed process|out of memory|oom" | tail -n 5 | sed 's/^/[p0 diag] dmesg: /'
   free -g 2>/dev/null | sed 's/^/[p0 diag] /'
   return 0
+}
+
+take_lock() {  # one run_p0.sh per output directory (children of `all` share their parent's lock)
+  [ "${WORK3_P0_LOCK_HELD:-0}" = "1" ] && return 0
+  command -v flock > /dev/null || return 0
+  mkdir -p "$OUT_ROOT"
+  exec 8> "$OUT_ROOT/.run_p0.lock"
+  if ! flock -n 8; then
+    log "another run_p0.sh is already running on $OUT_ROOT; stop it first (bash $0 cleanup stops it)"
+    exit 4
+  fi
+  export WORK3_P0_LOCK_HELD=1
+}
+
+stop_orchestrators() {  # stop other run_p0.sh stage runs on this DRZERO_DIR before killing their stages
+  python3 - "$$" "$DRZERO_DIR" <<'PY'
+import os, signal, sys, time
+me, drzero = int(sys.argv[1]), sys.argv[2]
+skip, p = set(), me
+while p > 1:                                   # never ourselves or our ancestors
+    skip.add(p)
+    try:
+        p = int(open(f"/proc/{p}/stat").read().rsplit(")", 1)[1].split()[1])
+    except (OSError, ValueError, IndexError):
+        break
+found = []
+for d in os.listdir("/proc"):
+    if not d.isdigit() or int(d) in skip:
+        continue
+    try:
+        args = [a.decode(errors="replace") for a in open(f"/proc/{d}/cmdline", "rb").read().split(b"\0") if a]
+        env = open(f"/proc/{d}/environ", "rb").read().split(b"\0")
+    except OSError:
+        continue
+    i = next((k for k, a in enumerate(args) if a.endswith("scripts/p0/run_p0.sh")), None)
+    if i is None or ("DRZERO_DIR=" + drzero).encode() not in env:
+        continue
+    stage = args[i + 1] if i + 1 < len(args) else ""
+    if stage in ("cleanup", "probe", "check"):
+        continue
+    found.append((int(d), stage))
+for pid, stage in found:
+    print(f"[p0 cleanup] stopping run_p0.sh {stage} (pid {pid}) so it cannot start its next stage", flush=True)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+if found:
+    time.sleep(1)
+PY
 }
 
 finish_stage() {  # finish_stage <name> <rc>
@@ -527,7 +585,7 @@ stage_all() {  # unattended: every remaining P0 stage in order; finished stages 
   local s attempt max="${MAX_ATTEMPTS:-2}"
   for s in ${ALL_STAGES:-iter1 eval1 iter2 eval2 iter3 eval3 eval0 gate}; do
     attempt=1
-    until bash "$WORK3_DIR/scripts/p0/run_p0.sh" "$s"; do
+    until WORK3_P0_LOCK_HELD=1 bash "$WORK3_DIR/scripts/p0/run_p0.sh" "$s"; do
       if [ "$attempt" -ge "$max" ]; then
         log "all: $s failed $attempt time(s); stopping (logs in $OUT_ROOT/logs)"
         exit 1
@@ -559,6 +617,10 @@ PY
 }
 
 case "${1:-}" in
+  prepare|patch|iter1|iter2|iter3|eval0|eval1|eval2|eval3|gate|all) take_lock ;;
+esac
+
+case "${1:-}" in
   check) stage_check ;;
   prepare) stage_prepare ;;
   patch) stage_patch ;;
@@ -566,7 +628,7 @@ case "${1:-}" in
   eval0|eval1|eval2|eval3) stage_eval "${1#eval}" ;;
   gate) stage_gate ;;
   all) stage_all ;;
-  cleanup) cleanup_servers ;;
+  cleanup) stop_orchestrators; cleanup_servers ;;
   probe)   # read-only speed diagnosis of whatever stage is running now (factory feedback #3)
     python -m work3.speed_probe --seconds "${PROBE_SECONDS:-120}" --reward-port "$REWARD_PORT" \
       --retriever-stats "$OUT_ROOT/logs/retriever_stats.json" \
