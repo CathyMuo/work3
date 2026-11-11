@@ -105,10 +105,32 @@ for sig in (signal.SIGTERM, signal.SIGKILL):
 left = tagged()
 if left:
     print(f"[p0 cleanup] still alive: {left}", flush=True)
+# GPU processes this tag does not cover (e.g. a leftover SGLang from an older run) would eat the
+# memory the next stage needs. Report them; never kill them, they may belong to someone else.
+import subprocess
+try:
+    q = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"],
+                       capture_output=True, text=True, timeout=30).stdout
+except Exception:
+    q = ""
+for line in q.splitlines():
+    try:
+        pid, mib = (int(x) for x in line.split(","))
+    except ValueError:
+        continue
+    if mib < 4096 or pid in left:
+        continue
+    try:
+        cmd = open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace").strip()
+    except OSError:
+        cmd = "?"
+    if any(k in cmd for k in ("sglang", "ray::", "verl", "retrieval_server", "p0_launch", "drzero")):
+        print(f"[p0 cleanup] WARNING untagged GPU process pid={pid} {mib / 1024:.0f} GB: {cmd[:160]}", flush=True)
+        print("[p0 cleanup]   not started under this run's tag; if it is a leftover of Work 3, kill it by PID before training", flush=True)
 PY
 }
 
-timed() {  # timed <name> <cmd...>: run tagged, tee log, record wall-clock seconds, clean up
+timed_rc() {  # timed_rc <name> <cmd...>: run tagged, tee log, record wall-clock seconds, clean up; returns the exit code
   local name="$1"; shift
   local t0; t0=$(date +%s)
   log "start $name"
@@ -118,8 +140,93 @@ timed() {  # timed <name> <cmd...>: run tagged, tee log, record wall-clock secon
   set -e
   echo "$name $(( $(date +%s) - t0 )) $rc $(date +%s)" >> "$OUT_ROOT/timings.txt"   # name seconds exit end
   cleanup_servers
-  if [ "$rc" -ne 0 ]; then log "FAILED $name (exit $rc)"; exit "$rc"; fi
-  log "done $name"
+  return "$rc"
+}
+
+finish_stage() {  # finish_stage <name> <rc>
+  if [ "$2" -ne 0 ]; then log "FAILED $1 (exit $2)"; exit "$2"; fi
+  log "done $1"
+}
+
+timed() {  # timed <name> <cmd...>: timed_rc, and stop the whole run on a nonzero exit
+  local rc=0
+  timed_rc "$@" || rc=$?
+  finish_stage "$1" "$rc"
+}
+
+# A training stage's product is its final checkpoint. verl writes the actor shards on every rank,
+# then data.pt, then latest_checkpointed_iteration.txt last, so a tracker that names the final step
+# plus every shard present means the checkpoint is complete.
+ckpt_complete() {  # ckpt_complete <ckpt_dir> <step>
+  python3 - "$1" "$2" "$NGPU" <<'PY'
+import os, sys
+d, step, ngpu = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+g = os.path.join(d, f"global_step_{step}")
+actor = os.path.join(g, "actor")
+problems = []
+try:
+    with open(os.path.join(d, "latest_checkpointed_iteration.txt")) as f:
+        latest = f.read().strip()
+    if latest != str(step):
+        problems.append(f"latest_checkpointed_iteration.txt says {latest!r}, expected {step}")
+except OSError:
+    problems.append("latest_checkpointed_iteration.txt missing")
+for kind in ("model", "optim", "extra_state"):
+    for r in range(ngpu):
+        f = os.path.join(actor, f"{kind}_world_size_{ngpu}_rank_{r}.pt")
+        if not (os.path.isfile(f) and os.path.getsize(f) > 0):
+            problems.append(f"missing or empty {os.path.relpath(f, d)}")
+for f in (os.path.join(g, "data.pt"), os.path.join(actor, "huggingface", "config.json")):
+    if not os.path.isfile(f):
+        problems.append(f"missing {os.path.relpath(f, d)}")
+for line in problems[:6]:
+    print(f"[p0 ckpt] {os.path.basename(d)}: {line}", flush=True)
+sys.exit(1 if problems else 0)
+PY
+}
+
+settle_timing() {  # settle_timing <name>: a stage whose final checkpoint is complete must not stay "failed"
+  python3 - "$OUT_ROOT/timings.txt" "$1" <<'PY'
+import sys
+path, name = sys.argv[1], sys.argv[2]
+try:
+    rows = [l.split() for l in open(path, encoding="utf-8").read().splitlines()]
+except OSError:
+    sys.exit(0)
+rows = [r for r in rows if r[:1] == [name]]
+if rows and len(rows[-1]) >= 3 and rows[-1][2] != "0":
+    r = rows[-1]
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(" ".join([name, r[1], "0"] + r[3:4]) + "\n")
+    print(f"[p0] {name}: its exit code {r[2]} came after a complete final checkpoint; recorded as done", flush=True)
+PY
+}
+
+train_stage() {  # train_stage <name> <ckpt_dir> <final_step> <cmd...>
+  # Like timed, but a nonzero exit AFTER the final checkpoint was completely written is a teardown
+  # error, not a failed stage: warn, record it in teardown_warnings.txt, and carry on.
+  local name="$1" dir="$2" step="$3"; shift 3
+  local rc=0
+  timed_rc "$name" "$@" || rc=$?
+  if [ "$rc" -ne 0 ] && ckpt_complete "$dir" "$step"; then
+    log "WARNING $name exited $rc after its final checkpoint global_step_$step was completely written (an error while the trainer shut down; see logs/$name.log); continuing"
+    echo "$name $rc global_step_$step $(date +%s)" >> "$OUT_ROOT/teardown_warnings.txt"
+    settle_timing "$name"
+    rc=0
+  fi
+  finish_stage "$name" "$rc"
+}
+
+skip_trained() {  # skip_trained <name> <ckpt_dir> <final_step>: true if the final checkpoint is complete
+  [ "${FORCE:-0}" = "1" ] && return 1
+  [ -e "$2/global_step_$3/actor" ] || return 1
+  if ckpt_complete "$2" "$3"; then
+    log "skip $1: final checkpoint complete ($2/global_step_$3); FORCE=1 re-runs it"
+    settle_timing "$1"
+    return 0
+  fi
+  log "$1: global_step_$3 exists but is incomplete; training again from the latest complete checkpoint"
+  return 1
 }
 
 port_free() {  # port_free <port>: exit 0 if nothing listens on it
@@ -353,20 +460,21 @@ stage_iter() {  # stage_iter <t>; re-running it after a crash resumes where it s
     need "$CKPT/solver_iter$((t-1))_ratio${RATIO}_grpo_group5_${MODEL_NAME}/solver_iter$((t-1))_hf/config.json"
   fi
   cleanup_servers
-  if ! skip_done "iter${t}_challenger" "$chal/global_step_$((50 * t))/actor"; then
+  if ! skip_trained "iter${t}_challenger" "$chal" "$((50 * t))"; then
     # iterations 2-3 normally start from the previous iteration's checkpoint; if this iteration
     # already saved its own (a crash), continue from the latest one instead
     if [ "$t" -gt 1 ] && ls -d "$chal"/global_step_* >/dev/null 2>&1; then
       export WORK3_RESUME_MODE=auto
       log "iter${t}_challenger: resuming from its own latest checkpoint"
     fi
-    timed "iter${t}_challenger" bash "$PATCHED/iter${t}_challenger.sh" "$RATIO" "trainer.total_training_steps=$((50 * t))"
+    train_stage "iter${t}_challenger" "$chal" "$((50 * t))" \
+      bash "$PATCHED/iter${t}_challenger.sh" "$RATIO" "trainer.total_training_steps=$((50 * t))"
     unset WORK3_RESUME_MODE
   fi
   skip_done "iter${t}_gen_data" "$pool" || timed "iter${t}_gen_data" bash "$PATCHED/iter${t}_gen_data.sh" "$RATIO"
   timed "iter${t}_pool_check" python -m work3.pool_check "$pool" --out "$OUT_ROOT/pool_check_iter${t}.json"
-  skip_done "iter${t}_solver" "$solv/global_step_50/actor" ||
-    timed "iter${t}_solver" bash "$PATCHED/iter${t}_solver.sh" "$RATIO" "trainer.total_training_steps=50"
+  skip_trained "iter${t}_solver" "$solv" 50 ||
+    train_stage "iter${t}_solver" "$solv" 50 bash "$PATCHED/iter${t}_solver.sh" "$RATIO" "trainer.total_training_steps=50"
   skip_done "iter${t}_convert" "$solv/solver_iter${t}_hf/config.json" || timed "iter${t}_convert" convert_solver "$t"
 }
 

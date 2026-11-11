@@ -365,3 +365,53 @@ guide now says to restart the board after updating.
 Board only; run scripts identical to r8.
 
 Decision: `BOARD_STEP_ETA_R9`.
+
+## 2026-11-11: A nonzero exit after a complete final checkpoint is not a failure (tags `p0-r10`, `p1-r10`, `p2-r10`)
+
+**What happened (factory feedback #7).**
+
+- On p0-r8 the iteration-1 proposer finished 50/50 steps in 4 h 48 min. The
+  micro-batch fix held: memory stayed flat at 59 GB, and the reward went from
+  0.128 to 0.616.
+- It saved a complete `global_step_50`.
+- Three seconds later the TaskRunner raised "DataLoader worker ... is killed by
+  signal: Killed" and the run exited 1, which stopped `run_p0.sh` before
+  question-pool generation.
+- The cgroup recorded no OOM kill.
+
+**What the error is not.**
+
+- It is not a validation failure. The proposer uses `test_freq=-1`, and
+  "Final validation metrics: None" is printed unconditionally.
+- The killed process is the train dataloader's prefetch worker. It is
+  probably still alive after the loop because `StatefulDataLoader` keeps its
+  iterator for checkpointing.
+- The log does not show who sent the SIGKILL during shutdown. Ray reclaiming
+  the actor's children is the likely candidate. It can recur at the end of any
+  proposer or solver stage.
+
+**Decision.**
+
+- A training stage that exits nonzero is accepted when its final checkpoint is
+  complete:
+  - the tracker names the final step (it is written last);
+  - all rank shards are present;
+  - `data.pt` is present;
+  - `huggingface/config.json` is present.
+- Such an exit is logged to `teardown_warnings.txt` and recorded as done for the
+  board.
+- Skip-on-rerun uses the same check instead of "the actor directory exists".
+- Cleanup now reports untagged SGLang / Ray / verl GPU processes. The factory
+  had a leftover 48–53 GB SGLang process. Cleanup does not kill such processes.
+
+**Not adopted.**
+
+- Lowering `data.dataloader_num_workers`. The iteration-2 and iteration-3
+  proposers resume from the previous iteration's `data.pt`, which was saved
+  with 8 workers. Changing the worker count risks that state no longer loading,
+  and it deviates from upstream for no gain.
+- Changing Ray's memory monitor. Nothing points to it.
+
+Training settings are identical to r8.
+
+Decision: `TEARDOWN_EXIT_TOLERATED_R10`.

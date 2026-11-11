@@ -226,3 +226,24 @@ unchanged.
      query, and thousands of searches per step arrive in bursts.
    - `expandable_segments` stays an opt-in fallback (`EXPANDABLE_SEGMENTS=1`),
      because its interplay with SGLang's memory saver is unverified.
+
+## Addendum 2026-11-11: a nonzero exit after a complete final checkpoint (factory feedback #7)
+
+On p0-r8 the iteration-1 proposer completed all 50 steps and wrote a complete
+`global_step_50`, then exited 1. A train-DataLoader prefetch worker was
+SIGKILLed while the trainer shut down. No validation was involved: the
+proposer runs with `test_freq=-1`, and "Final validation metrics: None" is
+verl's unconditional last-step print.
+
+From p0-r10, a proposer or solver stage that exits nonzero counts as completed
+only if its final checkpoint is complete. That means all of the following:
+
+- `latest_checkpointed_iteration.txt` names the final step (verl writes it last);
+- every rank's model, optimizer and extra-state shard is present;
+- `data.pt` is present;
+- `huggingface/config.json` is present.
+
+Such exits are logged to `teardown_warnings.txt`. Skipping a finished stage on
+a re-run uses the same check.
+
+No training setting, data, or gate changes.

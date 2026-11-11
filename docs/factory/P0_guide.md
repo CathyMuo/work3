@@ -1,6 +1,6 @@
 # P0 厂内指导：复现 Dr. Zero Qwen2.5-3B（4×H800）
 
-版本：tag `p0-r9`（2026-11-10：看板“正在进行”卡片在本步骤进度旁直接显示预计还需多久、几点完成；训练脚本与 p0-r8 完全相同）。
+版本：tag `p0-r10`（2026-11-11：训练阶段在最终检查点完整写完之后才报错退出，视为完成并继续，不再卡住整轮；训练参数与 p0-r8 完全相同）。
 协议（已冻结，不要改）：[research/protocols/P0_drzero_reproduction.md](../../research/protocols/P0_drzero_reproduction.md)，执行以末尾各节 **Addendum** 为准。
 判定：第 3 轮 7 个数据集平均 EM ≥ **0.306** 为 PASS（论文 0.326）。
 
@@ -8,22 +8,44 @@
 
 ---
 
-## 0. 反馈 #6 之后：用 p0-r8 从 global_step_20 续跑第 1 轮（现在没有任务在跑，可以直接切换）
+## 0. 反馈 #7 之后：切到 p0-r10，接着跑第 1 轮（出题者已完成，直接进入题池生成）
 
-第 1 轮出题者在第 30 步的反向传播中 OOM，原因和处理见第 6 节“显存”。**从 global_step_20 续跑，不要 FORCE**：
+第 1 轮出题者 50 步已经跑完，`global_step_50` 完整。退出码 1 来自训练结束之后的收尾阶段，和最终校验无关：
+
+- 出题者设置的是 `trainer.test_freq=-1`，整个训练一次校验都不跑。
+- `Final validation metrics: None` 是 verl 在最后一步无条件打印的一行，不是报错，所以也不需要“跳过最终校验”的开关。
+- 报错的那个 DataLoader 子进程，只是训练集的预取进程。它在检查点写完之后、trainer 退出时被 SIGKILL 杀掉，于是 TaskRunner 抛错，整个进程以 1 退出。
+- 这时产物已经完整，P0 判定用的是独立的 eval，不受影响。
+
+p0-r10 的改动只在流程控制上，训练参数和 p0-r8 逐字相同：
+
+- 出题者或解题者退出码不为 0 时，先检查**最终检查点是否完整**，三项都要满足：
+  - `latest_checkpointed_iteration.txt` 等于最后一步；
+  - 每张卡的 model / optim / extra_state 分片都在；
+  - `data.pt` 和 `huggingface/config.json` 都在。
+- 检查点完整时：打 WARNING 并记入 `teardown_warnings.txt`，看板上记为完成，接着跑后面的阶段。
+- 检查点不完整时：照旧停下。
+- 重跑时，“跳过已完成的训练”也改成按同样的标准判断：只看见 `global_step_N/actor` 目录、但里面没写完，不算完成，会接着训练。
+- 清理进程后，如果卡上还有不带本次标记、却像是 SGLang / Ray / verl 的进程（占用 ≥4 GB），会打印它的 PID 和命令行。脚本不会杀它。
 
 ```bash
 cd <工作目录>/work3
-cp $DRZERO_DIR/work3_p0/logs/iter1_challenger.log $DRZERO_DIR/work3_p0/logs/iter1_challenger.oom_step30.log   # 留档
-git fetch --tags && git checkout p0-r9
-bash $P0 check
-bash $P0 patch     # 日志里应有 "... proposer rollout memory 0.25; micro-batch 1"
-bash $P0 iter1     # 自动从 global_step_20 继续（第 21 步起），之后依次跑题池、解题者……
+git fetch --tags && git checkout p0-r10
+bash $P0 cleanup   # 看最后几行：有 "WARNING untagged GPU process" 就按下面处理残留进程
+nvidia-smi         # 确认 48–53 GB 的残留 sglang 已经没了
+bash $P0 iter1     # 日志应有 "skip iter1_challenger: final checkpoint complete"，然后直接开始 iter1_gen_data
 ```
 
-- 续跑时，日志开头应有 verl 加载 `global_step_20` 的提示，训练进度条从 20/50 开始。
-- 第 21–30 步会按同样的数据重新跑一遍，这是检查点续跑的正常代价。
-- **再遇到崩溃**：先 `bash $P0 cleanup`，再原样重跑 `bash $P0 iter1`。已完成的子步骤会被跳过，训练从最近的检查点继续。要强制重跑，加 `FORCE=1`。
+- **残留的 sglang（48–53 GB）**：先确认它属于工作3：
+  ```bash
+  tr '\0' ' ' < /proc/<PID>/cmdline
+  tr '\0' '\n' < /proc/<PID>/environ | grep WORK3
+  ```
+  命令行里应有 drzero 目录、Qwen2.5-3B 或 8101 端口。确认后 `kill <PID>`，不行再 `kill -9 <PID>`。不要动工作2的 :8000 检索服务。卡 0 没有余量，残留不清掉，下一阶段一定 OOM。
+- 不需要重新 `patch`：p0-r10 生成的补丁脚本和 r8/r9 完全相同。
+- **第 2、3 轮和解题者也可能在同一位置报同样的错**：收尾路径相同，而且是否触发不稳定。r10 会自动判断并继续，不用手动重跑。每遇到一次，`teardown_warnings.txt` 就多一行，请随结果一起发回。
+- cgroup 的 `memory.events` 里 `max` 计数很大、但 `oom_kill` 为 0：这是页缓存（检查点写盘、语料）顶到 720 GB 上限后被回收，属于正常现象，不用处理。
+- **真正的崩溃**（检查点不完整，日志里有 `[p0 ckpt] ... missing`）：先 `bash $P0 cleanup`，再原样重跑 `bash $P0 iter1`，训练会从最近的完整检查点继续。要强制重跑，加 `FORCE=1`。
 
 ## 1. 开跑前：停掉显卡保活程序
 
@@ -257,6 +279,7 @@ DRZERO_DIR=<工作目录>/drzero BOARD_PYTHON=$(which python) bash <工作目录
 ```bash
 cd $DRZERO_DIR/work3_p0
 cat p0_summary.json; cat pool_check_iter*.json; cat timings.txt
+cat teardown_warnings.txt 2>/dev/null   # 训练写完检查点后在收尾阶段报错的记录（r10 起）
 cat logs/retriever_stats.json 2>/dev/null
 grep -h "retriever ready" logs/*.log
 grep -h "Final rewards" logs/iter*_challenger.log | awk 'NR%10==0' | tail -n 30

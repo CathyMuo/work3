@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "project": "work3",
-  "updated_at": "2026-11-10",
+  "updated_at": "2026-11-11",
   "current_stage": "P0",
-  "status": "P0 iteration-1 proposer OOM'd again at step 30/50 (training-side backward; memory grew 42→59 GB with response length). p0-r8 halves the per-pass tokens (micro-batch 2→1, same mini-batch and optimiser steps); resume from global_step_20. Board now shows per-stage, per-iteration and per-phase ETAs.",
-  "next_action": "Factory: checkout p0-r8, patch, re-run iter1 (resumes from global_step_20); watch GPU memory on the board. Home: review iteration-1 results.",
+  "status": "P0 iteration-1 proposer finished 50/50 steps on p0-r8 (micro-batch 1: memory flat at 59 GB, reward 0.128 -> 0.616) and saved a complete global_step_50, but the process then exited 1: a train-DataLoader prefetch worker was SIGKILLed while the trainer shut down (no validation runs; test_freq=-1). p0-r10 treats a nonzero exit after a complete final checkpoint as done and continues.",
+  "next_action": "Factory: checkout p0-r10, cleanup (and remove the leftover 48-53 GB sglang), re-run iter1; it skips the finished proposer and starts question-pool generation. Home: review iteration-1 results.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -29,7 +29,7 @@
   "upstreams": {
     "drzero": "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
   },
-  "p0_release": "p0-r9",
-  "p1_release": "p1-r9",
-  "p2_release": "p2-r9"
+  "p0_release": "p0-r10",
+  "p1_release": "p1-r10",
+  "p2_release": "p2-r10"
 }
