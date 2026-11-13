@@ -1,12 +1,26 @@
 # P1 厂内指导：噪声诊断（P0 跑完后运行）
 
-版本：tag `p1-r12`（2026-11-10，含反馈 #2–#6 的修复、提速、崩溃续跑与显存修复；环境同 P0 指导第 3 节）。协议（已冻结，不要改）：[research/protocols/P1_noise_diagnosis.md](../../research/protocols/P1_noise_diagnosis.md)，执行以末尾的 **Addendum 2026-11-06** 为准。
+版本：tag `p1-r13`（2026-11-13：P0 已 PASS，现在启动；汇总新增按 hop 分组的探索性统计，不影响判定；运行脚本与 r12 相同）。协议（已冻结，不要改）：[research/protocols/P1_noise_diagnosis.md](../../research/protocols/P1_noise_diagnosis.md)，执行以末尾的 **Addendum 2026-11-06** 为准。
 
 **前提**：P0 全部跑完（包括 `gate`），且 `p0_summary.json` 已经发回家服。只要 P0 不是 INVALID 就可以跑 P1；P0 是否 PASS 由家服判断，P1 的产物照样有用。
 
 **规则同 P0**：厂内不推送、不写代码、不改协议与决策文件；出错时不要自行修改，按第 4 节发回。
 
 ---
+
+## 0. 反馈 #10 之后：先做 P0 行为诊断（只用 CPU，几分钟），再启动 P1
+
+P0 判定 **PASS**（第 3 轮 0.3071 ≥ 0.306，门槛已冻结，不再讨论）。三轮的走势和论文不同：单跳题持续进步，多跳题持续退化。家服的判断见 `research/DECISION_LOG.md` 2026-11-13 一节。
+
+先在 P0 的评测结果上跑一个只读诊断。它看的是解题者自己的轨迹：每题搜了几次、不搜就答的比例、搜索次数和对错的关系，以及同一道题在第 1 轮和第 3 轮之间的对错翻转。
+
+```bash
+cd <工作目录>/work3
+git fetch --tags && git checkout p1-r13
+python -m work3.p0_diag --eval-root $DRZERO_DIR/work3_p0/eval --out $DRZERO_DIR/work3_p0/p0_diag.json
+```
+
+终端会打印一张表，请把整张表连同 `p0_diag.json` 发回。然后接着按第 2 节启动 P1（pool1 → pool3 → parity → summary）。P1 的运行脚本与 r12 完全相同，`p1_summary.json` 里多出一节 `exploratory_by_hop`，只作探索性参考，不参与 GO / NO-GO 判定。
 
 ## 1. 准备
 

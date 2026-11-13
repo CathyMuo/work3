@@ -48,7 +48,39 @@ def question_stats(rec: dict) -> dict:
             new_search += int(r.get("new_tool_calls", 0) > 0)
             unreplayable += int(not r.get("replayable", True))
     return {"qid": rec["qid"], "k": k, "tot": tot, "noise": float(np.mean(noise_terms)),
-            "replays": replays, "new_search": new_search, "unreplayable": unreplayable}
+            "replays": replays, "new_search": new_search, "unreplayable": unreplayable,
+            "hop": hop_group(rec.get("data_source"))}
+
+
+def hop_group(data_source) -> str | None:
+    """search_zero_<n> (Dr. Zero seed tag) -> "1", "2" or "3+" (hops 3 and 4 are pooled because
+    a 500-question draw holds only about 50 four-hop questions)."""
+    tail = str(data_source or "").rsplit("_", 1)[-1]
+    if not tail.isdigit():
+        return None
+    return tail if int(tail) <= 2 else "3+"
+
+
+def by_hop(stats: list[dict], boot: int = BOOT, seed: int = SEED) -> dict:
+    """Exploratory (Addendum 2026-11-13; not part of the gate): eta and k per hop group, with a
+    question-level bootstrap interval for eta over all 0 < k < n questions of the group."""
+    rng = np.random.default_rng(seed)
+    out = {}
+    for g in ("1", "2", "3+"):
+        st = [s for s in stats if s["hop"] == g]
+        mixed = [s for s in st if 0 < s["k"] < N]
+        ci = None
+        if len(mixed) >= 10:
+            tot = np.array([s["tot"] for s in mixed]); noise = np.array([s["noise"] for s in mixed])
+            draws = []
+            for _ in range(boot):
+                idx = rng.integers(0, len(mixed), size=len(mixed))
+                draws.append(noise[idx].sum() / tot[idx].sum())
+            ci = [float(np.percentile(draws, 2.5)), float(np.percentile(draws, 97.5))]
+        out[g] = {"questions": len(st), "k_hist": {str(k): sum(s["k"] == k for s in st) for k in range(N + 1)},
+                  "eta_k1": eta(st, (1,)), "eta_k34": eta(st, (3, 4)), "eta_mixed": eta(st, (1, 2, 3, 4)),
+                  "eta_mixed_ci95": ci}
+    return out
 
 
 def eta(stats: list[dict], ks: tuple[int, ...]) -> float | None:
@@ -143,6 +175,10 @@ def summarize(run_dir: Path, pool_check_ok: bool | None, parity: dict | None) ->
               "replay_new_search_rate": new_rate, "unreplayable_replays": all_unrep,
               "parity": ({k: parity.get(k) for k in ("checked", "text_equal", "ids_equal", "errors",
                                                       "tool_schema_source")} if parity else None)}
+    result["exploratory_by_hop"] = {
+        "note": "exploratory (P1 Addendum 2026-11-13), not part of the gate",
+        **{f"pool{p}": by_hop(st) for p, st in pools.items()},
+        **({"pooled": by_hop([s for p in POOLS for s in pools[p]])} if len(pools) == len(POOLS) else {})}
     if len(pools) == len(POOLS):
         pooled = [s for p in POOLS for s in pools[p]]
         e1, e34 = eta(pooled, (1,)), eta(pooled, (3, 4))

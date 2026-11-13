@@ -1,16 +1,44 @@
 {
   "schema_version": 1,
   "project": "work3",
-  "updated_at": "2026-11-11",
-  "current_stage": "P0",
-  "status": "P0 iteration 1: proposer and question pool done (33,923 rows). Root cause of feedback #7-#9 found: stages piped through tee never returned because upstream scripts leave servers in the background holding the pipe; external `cleanup` then released them and killed the next stage (7 s / 4 s, exit 137). p0-r12 logs to files without a pipe, makes `cleanup` stop running orchestrators first, and allows one run_p0.sh per output directory.",
-  "next_action": "Factory: checkout p0-r12, `bash $P0 cleanup` (stops the r11 all), then `bash $P0 all` in tmux; the solver resumes from its latest checkpoint. Home: review iteration-1 results.",
+  "updated_at": "2026-11-13",
+  "current_stage": "P1",
+  "status": "P0 PASS (frozen gate): iteration-3 7-dataset average EM 0.3071 >= 0.306 (paper 0.326); iterations 0/1/2/3 = 0.1284/0.3168/0.3103/0.3071 (paper -/0.304/0.319/0.326). Single-hop mean rises like the paper (+0.029 vs +0.034, iter 1->3); multi-hop mean falls (-0.039 vs paper +0.013). Unattended r12 run: 27 stages, 35 h 39 min, no manual intervention.",
+  "next_action": "Factory: checkout p1-r13, run work3.p0_diag on the P0 eval dumps (CPU) and send the table, then run P1 (pool1, pool3, parity, summary). Home: read the search-behaviour diagnosis; P1 GO/NO-GO decides P2.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
     "decide_by": "2026-12-15"
   },
-  "experiment_results": [],
+  "experiment_results": [
+    {
+      "id": "P0",
+      "date": "2026-11-13",
+      "release": "p0-r12",
+      "verdict": "PASS",
+      "avg_em": {
+        "iter0": 0.1284,
+        "iter1": 0.3168,
+        "iter2": 0.3103,
+        "iter3": 0.3071
+      },
+      "paper_avg_em": {
+        "iter1": 0.304,
+        "iter2": 0.319,
+        "iter3": 0.326
+      },
+      "per_dataset_iter3": {
+        "nq": 0.396,
+        "triviaqa": 0.559,
+        "popqa": 0.411,
+        "hotpotqa": 0.28,
+        "2wikimultihopqa": 0.26,
+        "musique": 0.076,
+        "bamboogle": 0.168
+      },
+      "note": "single seed; serves as the Dr. Zero arm of P2 (A1/A2/A3 = 0.3168/0.3103/0.3071)"
+    }
+  ],
   "repository": "https://github.com/CathyMuo/work3 (public; renamed from work3_byd on 2026-11-06; method code public)",
   "frozen_gates": {
     "P0": {
@@ -30,6 +58,6 @@
     "drzero": "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
   },
   "p0_release": "p0-r12",
-  "p1_release": "p1-r12",
+  "p1_release": "p1-r13",
   "p2_release": "p2-r12"
 }

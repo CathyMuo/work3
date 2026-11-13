@@ -114,3 +114,23 @@ written before any P0 or P1 data existed.
 
 The text of this file before this addendum has the SHA-256 recorded on
 2026-11-06 (`4727861905cb818eb5b39eb2874c22e350fc89a4ffb7751e5b33e57c4e7b6322`).
+
+## Addendum 2026-11-13: exploratory hop breakdown (written before any P1 data)
+
+P0 passed. From iteration 1 to 3, its single-hop EM rose and its multi-hop EM
+fell (factory feedback #10). `p1_summary.json` therefore also reports
+`exploratory_by_hop`. Each sampled question is grouped by its seed hop
+(`search_zero_<n>`): 1, 2, or 3+. Hops 3 and 4 are pooled because about 50
+four-hop questions fall in a 500-question draw. The report gives these for
+each pool and for both pools pooled:
+
+- question count;
+- k histogram;
+- eta(k=1);
+- eta(k in {3,4});
+- eta over 0 < k < n, with a question-level bootstrap 95% interval (numpy seed
+  20261106).
+
+This breakdown is exploratory. It is not part of the gate and changes nothing
+above. The sampling, the groups, eta, the primary and secondary criteria, and
+the verdict are unchanged.

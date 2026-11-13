@@ -506,3 +506,71 @@ They were not the cause.
 Training settings are identical to r8.
 
 Decision: `NO_PIPE_STAGE_LOGS_R12`.
+
+## 2026-11-13: P0 PASS; multi-hop decline is the open question; start P1 (tag `p1-r13`)
+
+**Result (factory feedback #10).**
+
+- **Gate:** iteration-3 7-dataset average EM 0.3071 ≥ 0.306 → **PASS**. The
+  gate is frozen and the verdict stands.
+- **Average EM, iterations 0/1/2/3:** 0.1284 / 0.3168 / 0.3103 / 0.3071.
+  Paper: – / 0.304 / 0.319 / 0.326.
+- **Execution:** the whole run was unattended on r12. It took 35 h 39 min:
+  27 stages, 4 automatic retries, no manual intervention.
+
+**Reading.**
+
+1. **Only multi-hop departs from the paper.** Single-hop mean
+   (nq, triviaqa, popqa) went 0.426 → 0.455, +0.029 (paper +0.034).
+   Multi-hop mean (hotpotqa, 2wiki, musique, bamboogle) went 0.235 → 0.196,
+   −0.039 (paper +0.013). Our iteration-1 multi-hop score is above the
+   paper's (0.235 vs 0.207); our iteration-3 score is below it (0.196 vs 0.220).
+2. **The average decline is small and noisy.** It is −0.0097 from iteration 1
+   to 3. Bamboogle (125 questions, −0.056) carries most of it. The average of
+   the other six datasets is almost flat: 0.332 → 0.330. The
+   evaluation-sampling SE of the 7-dataset average is about 0.0055, mostly
+   from bamboogle. The per-dataset shifts on the large sets are well beyond
+   that noise: hotpotqa −0.027 on 7,405 questions, 2wiki −0.038 on 12,576,
+   popqa +0.054 on 14,267.
+3. **This is one seed.** The paper also reports one run. Run-to-run variance
+   is unknown, so the trend difference is not yet attributable.
+4. **Hop distributions say nothing about question quality.** The 4:3:2:1 hop
+   split of each pool is fixed by the seed file (`search_zero_<n>` prompts),
+   so it carries no information about the questions the proposer wrote.
+
+**Candidate causes (factory A–D).**
+
+- **C (only 50 incremental steps) and D (solver continues from the previous
+  solver)** are upstream's design. Both are reproduced exactly, so neither
+  alone explains a difference from the paper.
+- **A (noisy proposer reward)** is what P1 measures. P1 groups questions by k
+  (successes out of n), not by hop.
+- **B (multi-hop questions drift out of the solver's reach)** shows up in P1's
+  k histograms of pool 1 versus pool 3.
+- **E (new): the solver searches less.** Multi-hop questions need several
+  searches. If self-play training rewards answering with fewer searches,
+  multi-hop accuracy falls while single-hop rises. The P0 eval dumps already
+  contain every trajectory, so this can be checked on CPU now.
+
+**Decision.**
+
+- **Start P1 now.** Its gate is unchanged.
+- **Before P1, run `work3/p0_diag.py`** on the P0 eval dumps. It reports, per
+  dataset and iteration: searches per question, no-search share, no-answer
+  share, EM by search count, and paired iteration 1→3 flips with exact
+  McNemar tests. It tests E.
+- **P1 summary adds an exploratory hop breakdown** (P1 Addendum 2026-11-13,
+  written before P1 data). It addresses whether A and B differ by hop. It is
+  not a gate.
+
+**What follows from P1.**
+
+- **GO:** P2 proceeds as frozen. P0's run is the Dr. Zero arm:
+  A1/A2/A3 = 0.3168/0.3103/0.3071. NCP must reach A3 ≥ 0.3271 and A3 ≥ A2.
+  A GO alone does not show that noise causes P0's multi-hop decline. The hop
+  breakdown and p0_diag decide how far the paper can claim that.
+- **NO-GO:** the NCP direction stops, as frozen. The next direction is then
+  chosen from the diagnosis, for example if E holds. That is a new survey and
+  decision, made then, not now.
+
+Decision: `P0_PASS_START_P1_R13`.
