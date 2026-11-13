@@ -44,6 +44,17 @@ for _t in (1, 2, 3):
                   (f"eval{_t}", f"第{_t}轮 评测（51,713 题）", 3.0)]
 P0_STAGES.append(("eval0", "基座模型评测（参考）", 3.0))
 ARM_STAGES = [s for s in P0_STAGES if not s[0].startswith("prepare") and s[0] != "eval0"]
+# `run_p0.sh ablate` (feedback #11): iteration-3 solver retrained with micro-batch 2, then 1
+ABLATE_STAGES = []
+for _m in (2, 1):
+    ABLATE_STAGES += [(f"ablate_micro{_m}", f"微批次 {_m}：解题者训练（50 步）", 3.2),
+                      (f"ablate_micro{_m}_convert", f"微批次 {_m}：转 HF", 0.05),
+                      (f"ablate_micro{_m}_eval", f"微批次 {_m}：评测（51,713 题）", 1.6)]
+# Evaluation runs verl validation over data/test.parquet in batches of data.val_batch_size=256 and
+# prints "validation generation end" after each batch: 51,713 questions -> 203 batches.
+EVAL_QUESTIONS = 51_713
+EVAL_BATCH = 256
+EVAL_DONE = re.compile(r"validation generation end")
 P1_STAGES = [("pool1", "题池 1 诊断（基座解题）", 2.0), ("pool3", "题池 3 诊断（solver_iter2）", 2.0),
              ("parity", "与上游提示一致性检查", 0.5)]
 P1_ARM_STAGES = [("pool3", "题池 3 诊断", 2.0)]
@@ -78,10 +89,60 @@ def tail_text(path: Path, nbytes: int = TAIL_BYTES) -> str:
         return ""
 
 
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
 def clean_lines(text: str) -> List[str]:
     """Split on newlines and carriage returns (tqdm), drop ANSI codes and empty lines."""
-    text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+    text = ANSI.sub("", text)
     return [ln for ln in re.split(r"[\r\n]+", text) if ln.strip()]
+
+
+class Counter:
+    """Incremental count of pattern matches in a growing file (whole file, not just its tail).
+    jsonl=True also collects the top-level "k" of each record (P1 questions)."""
+
+    def __init__(self):
+        self.files: Dict[tuple, dict] = {}
+        self.lock = threading.Lock()
+
+    def get(self, path: Path, pattern: Optional["re.Pattern"] = None, jsonl: bool = False) -> dict:
+        try:
+            st = path.stat()
+        except OSError:
+            return {"count": 0, "lines": 0, "k": {}}
+        key = (str(path), pattern.pattern if pattern else None, jsonl)
+        with self.lock:
+            e = self.files.get(key)
+            if e is None or st.st_size < e["offset"] or st.st_ino != e["ino"]:
+                e = {"offset": 0, "ino": st.st_ino, "rest": b"", "count": 0, "lines": 0, "k": {}}
+                self.files[key] = e
+            if st.st_size > e["offset"]:
+                with path.open("rb") as f:
+                    f.seek(e["offset"])
+                    while True:
+                        data = f.read(8 << 20)
+                        if not data:
+                            break
+                        e["offset"] += len(data)
+                        data = e["rest"] + data
+                        cut = data.rfind(b"\n")
+                        e["rest"] = data[cut + 1:] if cut >= 0 else data
+                        body = data[:cut + 1] if cut >= 0 else b""
+                        if pattern is not None:
+                            e["count"] += len(pattern.findall(body.decode("utf-8", "replace")))
+                        if jsonl:
+                            for line in body.split(b"\n"):
+                                if not line.strip():
+                                    continue
+                                e["lines"] += 1
+                                m = re.search(rb'"k":\s*(\d+)', line)
+                                if m:
+                                    e["k"][m.group(1).decode()] = e["k"].get(m.group(1).decode(), 0) + 1
+            return {"count": e["count"], "lines": e["lines"], "k": dict(e["k"])}
+
+
+COUNTER = Counter()
 
 
 def parse_timings(path: Path) -> Dict[str, dict]:
@@ -142,10 +203,9 @@ def step_metrics(text: str, keys=("critic/score/mean", "response_length/mean", "
         for item in m.group(2).split(" - "):
             k, _, v = item.partition(":")
             if k in keys:
-                try:
-                    row[k] = float(v)
-                except ValueError:
-                    pass
+                x = _num(v)
+                if x is not None:
+                    row[k] = x
         rows.append(row)
     return rows
 
@@ -157,7 +217,16 @@ def reward_series(text: str) -> List[float]:
     return vals
 
 
+_WRAPPED = re.compile(r"^(?:np|numpy|torch)?\.?\w*\((?P<v>[^,()]+)(?:,[^()]*)?\)$")   # np.float64(0.5), tensor(0.5, device=...)
+
+
 def _num(v: str) -> Optional[float]:
+    """A logged number. verl prints values with pprint.pformat, which shows numpy scalars as
+    np.float64(0.5) under numpy 2 and tensors as tensor(0.5, ...)."""
+    v = v.strip()
+    m = _WRAPPED.match(v)
+    if m:
+        v = m.group("v").strip()
     try:
         x = float(v)
     except ValueError:
@@ -211,10 +280,12 @@ class MetricsCache:
                         e["rest"] = text[cut + 1:] if cut >= 0 else text
                         self._consume(e, text[:cut + 1] if cut >= 0 else "")
             rows = [dict(step=s, **v) for s, v in sorted(e["steps"].items())]
-            return {"rows": rows, "rewards": list(e["rewards"]), "keys": sorted(e["keys"])}
+            return {"rows": rows, "rewards": list(e["rewards"]), "keys": sorted(e["keys"]),
+                    "unparsed_step_lines": e.get("unparsed", 0)}
 
     @staticmethod
     def _consume(e: dict, text: str) -> None:
+        text = ANSI.sub("", text)
         for line in re.split(r"[\r\n]+", text):
             if "step:" in line:
                 m = STEP_LINE.search(line)
@@ -223,6 +294,8 @@ class MetricsCache:
                     if items:
                         e["steps"].setdefault(int(m.group(1)), {}).update(items)
                         e["keys"].update(items)
+                    else:
+                        e["unparsed"] = e.get("unparsed", 0) + 1
                     continue
             m = FINAL_REWARD.search(line)
             if m:
@@ -442,9 +515,100 @@ STAGE_TEXT = {
 
 
 def stage_type(name: str) -> str:
+    """Stages of one type share a duration estimate and an explanation."""
     if name.startswith("prepare_"):
         return name
+    m = re.fullmatch(r"ablate_micro\d+(?:_(convert|eval))?", name)
+    if m:
+        return m.group(1) or "solver"
     return re.sub(r"^iter\d_|\d$", "", name)
+
+
+def stage_kind(name: str) -> str:
+    """How progress is measured: train (verl Training Progress bar + step lines), eval (validation
+    batches), gen (tqdm over generation batches), p1pool (P1 question records), other."""
+    t = stage_type(name)
+    if t in ("challenger", "solver"):
+        return "train"
+    if t == "eval":
+        return "eval"
+    if t == "gen_data":
+        return "gen"
+    if t == "pool":
+        return "p1pool"
+    return "other"
+
+
+def stage_start(run_dir: Path, name: str) -> Optional[float]:
+    """Start time written by run_p0.sh / run_p1.sh (r15+) as logs/<name>.start."""
+    try:
+        return float((run_dir / "logs" / f"{name}.start").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+NOISE_BARS = re.compile(r"Loading|Capturing|Fetching|shards|Compiling|Downloading|Processing", re.I)
+
+
+def gen_bar(bars: Dict[str, dict]) -> Optional[dict]:
+    """The question-generation bar: the largest non-trivial bar that is not model loading or
+    CUDA-graph capture."""
+    cands = [b for k, b in bars.items() if b.get("total") and b["total"] >= 2
+             and not re.search(r"Rollout|Training Progress", k) and not NOISE_BARS.search(k)]
+    return max(cands, key=lambda b: b["total"]) if cands else None
+
+
+def eval_progress(run_dir: Path, name: str) -> dict:
+    n = COUNTER.get(run_dir / "logs" / f"{name}.log", EVAL_DONE)["count"]
+    total = -(-EVAL_QUESTIONS // EVAL_BATCH)
+    return {"done": n, "total": total, "fraction": min(1.0, n / total),
+            "text": f"已评测 {min(n * EVAL_BATCH, EVAL_QUESTIONS):,} / {EVAL_QUESTIONS:,} 题（{n} / {total} 批）",
+            "basis": "按已完成的评测批次（每批 256 题）推算"}
+
+
+_SAMPLES: Dict[tuple, List[tuple]] = {}
+_SAMPLES_LOCK = threading.Lock()
+
+
+def progress_rate(key: tuple, now: float, frac: float, window: float = 1800.0) -> Optional[float]:
+    """Fraction per second over the board's own observations of a stage (last 30 min, at least
+    2 min apart). Used when the stage has no recorded start time."""
+    with _SAMPLES_LOCK:
+        s = _SAMPLES.setdefault(key, [])
+        if s and frac < s[-1][1]:          # restarted from a lower point
+            s.clear()
+        s.append((now, frac))
+        while s and now - s[0][0] > window:
+            s.pop(0)
+        t0, f0 = s[0]
+    if now - t0 < 120 or frac <= f0:
+        return None
+    return (frac - f0) / (now - t0)
+
+
+P1_BATCH = re.compile(r"\[p1 pool\d\] batch (\d+): (\d+) drawn")
+P1_AFTER = re.compile(r"\[p1 pool\d\] after batch (\d+): k=1 (\d+), k in 3-4 (\d+)")
+
+
+def p1_pool_progress(run_dir: Path, name: str) -> dict:
+    """P1 pool stage: question records (5 originals + 10 replays each), then 16 'lucky' re-runs
+    of every k=1 question. Progress counts records against what was drawn."""
+    p = name[-1]
+    text = tail_text(run_dir / "logs" / f"{name}.log", 2_000_000)
+    drawn = sum(int(m.group(2)) for m in P1_BATCH.finditer(text))
+    after = list(P1_AFTER.finditer(text))
+    q = COUNTER.get(run_dir / f"pool{p}_questions.jsonl", jsonl=True)
+    lucky = COUNTER.get(run_dir / f"pool{p}_lucky.jsonl", jsonl=True)["lines"]
+    k1 = int(after[-1].group(2)) if after else q["k"].get("1", 0)
+    lucky_total = k1 if after else max(k1, round(0.25 * max(drawn, 1)))
+    total = max(drawn, 1) + lucky_total
+    done = min(q["lines"], max(drawn, q["lines"])) + lucky
+    return {"done": done, "total": total, "fraction": min(0.99, done / total) if drawn else 0.0,
+            "questions": q["lines"], "drawn": drawn, "lucky": lucky, "lucky_total": lucky_total,
+            "k_hist": {k: q["k"].get(k, 0) for k in "012345"},
+            "text": (f"已完成 {q['lines']} / {drawn or '—'} 题；运气重测 {lucky} / "
+                     f"{lucky_total if after else '约 ' + str(lucky_total)} 题"),
+            "basis": "按已写入的题目记录推算"}
 
 
 LANE_SEGMENTS = [("出题者训练", ("challenger",)), ("生成题池", ("gen_data", "pool_check")),
@@ -512,6 +676,15 @@ def _build_lanes(rows: List[dict], kind: str, evals: dict, has_summary: bool) ->
         tail.append({"label": "门槛判定", "state": "done" if has_summary else "pending", "est_seconds": 60,
                      "fraction": 1.0 if has_summary else 0.0, "seconds": None, "stages": []})
         lanes.append({"label": "收尾", "segments": tail})
+    elif kind == "ablate":
+        for m in sorted({re.match(r"ablate_(micro\d+)", r["name"]).group(1) for r in rows}, reverse=True):
+            members = [r for r in rows if r["name"].startswith(f"ablate_{m}")]
+            segs = []
+            for label, typ in (("解题者训练", "solver"), ("转 HF", "convert"), ("评测", "eval")):
+                mm = [r for r in members if stage_type(r["name"]) == typ]
+                if mm:
+                    segs.append(_segment(label, mm, {"em": (evals.get(m) or {}).get("average")} if typ == "eval" else None))
+            lanes.append({"label": m.replace("micro", "微批次 "), "segments": segs})
     else:
         segs = [_segment(r["label"], [r]) for r in rows]
         segs.append({"label": "汇总判定", "state": "done" if has_summary else "pending", "est_seconds": 60,
@@ -588,7 +761,7 @@ def effective_seconds(row: dict, run_dir: Path) -> Optional[float]:
         return sec
     text = tail_text(run_dir / "logs" / f"{row['name']}.log")
     times = [m["timing_s/step"] for m in step_metrics(text) if "timing_s/step" in m]
-    if times and re.search(r"_(challenger|solver)$", row["name"]):
+    if times and stage_kind(row["name"]) == "train":
         derived = 50 * sum(times) / len(times) + 600
     else:
         done = [b["elapsed_s"] for b in tqdm_progress(text).values()
@@ -624,39 +797,59 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
         r["est_seconds"] = (sum(observed[typ]) / len(observed[typ])) if typ in observed else r["default_hours"] * 3600
         r["fraction"] = 1.0 if r["state"] == "done" else 0.0
         if current and r["name"] == current["stage"] and r["state"] in ("running", "stalled"):
-            bar = current["bars"].get("Training Progress")
+            kind_ = stage_kind(r["name"])
+            start = stage_start(run_dir, r["name"]) or last_end
+            current["kind"] = kind_
+            current["started"] = start
+            bar = current["bars"].get("Training Progress") if kind_ == "train" else None
             frac = training_fraction(r["name"], bar)
             if bar:
                 mm = re.match(r"iter(\d)_challenger$", r["name"])
                 base = 50 * (int(mm.group(1)) - 1) if mm else 0
                 current["steps_done"], current["steps_total"] = max(0, bar["n"] - base), max(0, bar["total"] - base)
-            # Non-training stages with their own progress bar (e.g. question-pool generation):
-            # use that bar's fraction and tqdm's remaining time.
+                current["progress_text"] = f"训练第 {current['steps_done']} / {current['steps_total']} 步"
             other = None
-            if frac is None:
-                cands = [b for k, b in current["bars"].items()
-                         if not re.search(r"Rollout|Training Progress", k) and b.get("total")]
-                other = max(cands, key=lambda b: b["total"]) if cands else None
+            if kind_ == "eval":
+                p = eval_progress(run_dir, r["name"])
+                frac, current["progress_text"], current["eta_basis"] = p["fraction"], p["text"], p["basis"]
+            elif kind_ == "p1pool":
+                p = p1_pool_progress(run_dir, r["name"])
+                frac, current["progress_text"], current["eta_basis"] = p["fraction"], p["text"], p["basis"]
+                current["p1"] = p
+            elif frac is None:
+                # question-pool generation and anything else with its own progress bar
+                other = gen_bar(current["bars"])
                 if other:
                     frac = other["n"] / other["total"]
-            if frac is None and last_end:                      # no bar at all: elapsed since previous stage ended
-                frac = min(0.95, max(0.0, (now - last_end) / r["est_seconds"]))
-                current["eta_basis"] = "按这类步骤的典型耗时估计（暂无进度条）"
+                    current["progress_text"] = f"第 {other['n']} / {other['total']} 批"
+            if frac is None and start:                         # no progress signal at all
+                frac = min(0.95, max(0.0, (now - start) / r["est_seconds"]))
+                current["eta_basis"] = "按这类步骤的典型耗时估计（这一步没有进度输出）"
+                current["progress_estimated"] = True
             # Steps get slower as the proposer improves (more valid questions to score), so the
             # remaining time of a training stage uses the mean of its latest five step times;
             # before any step has finished it falls back to tqdm's own estimate.
             recent = [s["timing_s/step"] for s in current.pop("_steps", []) if "timing_s/step" in s][-5:]
+            src = bar if bar and bar.get("remaining_s") is not None else other
             if recent and current.get("steps_total") and frac is not None and frac < 1:
                 left = (current["steps_total"] - current["steps_done"]) * sum(recent) / len(recent)
                 r["est_seconds"] = left / (1 - frac)
                 current["eta_basis"] = f"按最近 {len(recent)} 步平均 {round(sum(recent) / len(recent))} 秒/步估计"
-            else:
-                src = bar if bar and bar.get("remaining_s") is not None else other
-                if src and src.get("remaining_s") is not None and frac is not None and frac < 1:
-                    r["est_seconds"] = src["remaining_s"] / (1 - frac)
-                    current["eta_basis"] = "按进度条的当前速度估计"
+            elif src and src.get("remaining_s") is not None and frac is not None and frac < 1:
+                r["est_seconds"] = src["remaining_s"] / (1 - frac)
+                current["eta_basis"] = "按进度条的当前速度估计"
+            elif (kind_ in ("eval", "p1pool") and start and frac and 0.02 <= frac < 1
+                  and not current.get("progress_estimated")):
+                r["est_seconds"] = (now - start) / frac            # rate so far, incl. model loading
+                current["eta_basis"] += "，按目前的速度估计剩余时间"
+            elif frac is not None and 0 < frac < 1 and not current.get("progress_estimated"):
+                # no start time (a stage started by an older script): the board's own samples
+                rate = progress_rate((str(run_dir), r["name"]), now, frac)
+                if rate:
+                    r["est_seconds"] = 1 / rate                    # remaining = (1 - frac) / rate
+                    current["eta_basis"] = (current.get("eta_basis") or "") + "，按看板最近观测到的速度估计"
             current["fraction"] = frac
-            current["elapsed_seconds"] = round(now - last_end) if last_end else None
+            current["elapsed_seconds"] = round(now - start) if start else None
             r["fraction"] = frac or 0.0
     total = sum(r["est_seconds"] for r in rows) or 1.0
     done_part = sum(r["est_seconds"] * r["fraction"] for r in rows)
@@ -671,7 +864,8 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
     # errors over all logs (tails)
     errors = {"traceback": 0, "failed": 0, "oom": 0, "undefined_function": 0,
               "undefined_function_names": {}, "last_lines": []}
-    for log in sorted((run_dir / "logs").glob("*.log"), key=lambda p: p.stat().st_mtime):
+    plan_logs = [run_dir / "logs" / f"{r['name']}.log" for r in rows]
+    for log in sorted((p for p in plan_logs if p.exists()), key=lambda p: p.stat().st_mtime):
         e = scan_errors(tail_text(log))
         for k in ("traceback", "failed", "oom", "undefined_function"):
             errors[k] += e[k]
@@ -685,8 +879,15 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
             d = run_dir / "eval" / f"iter{t}"
             if d.is_dir() and any(r["name"] == f"eval{t}" and r["state"] == "done" for r in rows):
                 evals[str(t)] = eval_average(d)
-    summary_name = "p0_summary.json" if kind == "p0" else "p1_summary.json"
-    summary = load_json(run_dir / summary_name)
+    elif kind == "ablate":
+        for r in rows:
+            m = re.fullmatch(r"ablate_(micro\d+)_eval", r["name"])
+            if m and r["state"] == "done":
+                evals[m.group(1)] = eval_average(run_dir / "eval_ablate" / m.group(1))
+    p1_pools = ({r["name"]: p1_pool_progress(run_dir, r["name"]) for r in rows
+                 if stage_kind(r["name"]) == "p1pool" and r["state"] != "pending"} if kind == "p1" else {})
+    summary_name = {"p0": "p0_summary.json", "p1": "p1_summary.json", "ablate": "p0_diag_ablate.json"}[kind]
+    summary = load_json(run_dir / summary_name) if kind != "ablate" else None
     started = any(r["state"] != "pending" for r in rows)
     return {"id": run_id, "title": title, "dir": str(run_dir), "kind": kind, "exists": run_dir.is_dir(),
             "started": started, "stages": rows, "current": current,
@@ -695,7 +896,8 @@ def run_status(run_id: str, title: str, run_dir: Path, plan, kind: str, now: flo
             "est_total_seconds": round(total),
             "est_by_type": {stage_type(r["name"]): r["est_seconds"] for r in rows},
             "lanes": build_lanes(rows, kind, evals, bool(summary)),
-            "errors": errors, "evals": evals, "threshold": P0_THRESHOLD,
+            "errors": errors, "evals": evals, "threshold": P0_THRESHOLD, "p1_pools": p1_pools,
+            "ablate_done": kind == "ablate" and (run_dir / "p0_diag_ablate.json").exists(),
             "teardown_warnings": [{"name": r["name"], "label": r["label"], **r["warning"]}
                                   for r in rows if r.get("warning")],
             "summary": ({k: summary.get(k) for k in ("verdict", "problems", "pooled", "primary",
@@ -714,6 +916,7 @@ class Board:
         self.specs = []
         if p0:
             self.specs.append(("p0", "P0 复现 Dr. Zero", Path(p0), P0_STAGES, "p0"))
+            self.specs.append(("p0-ablate", "P0 消融：第 3 轮解题者（微批次 2 / 1）", Path(p0), ABLATE_STAGES, "ablate"))
         if p1:
             self.specs.append(("p1", "P1 噪声诊断", Path(p1), P1_STAGES, "p1"))
         if ar:
@@ -733,10 +936,16 @@ class Board:
         spec = self._spec(run_id)
         if not spec:
             return None
-        names = [n for n, _, _ in spec[3] if ("challenger" in n or "solver" in n or n.startswith("eval"))
-                 and (spec[2] / "logs" / f"{n}.log").exists()]
-        labels = {n: lbl for n, lbl, _ in spec[3]}
-        return {"run": run_id, "stages": [{"name": n, "label": labels[n]} for n in names],
+        stages = []
+        for n, label, _ in spec[3]:
+            log = spec[2] / "logs" / f"{n}.log"
+            if stage_kind(n) != "train" or not log.exists():
+                continue
+            d = self.metrics_cache.get(log)
+            stages.append({"name": n, "label": label, "steps": len(d["rows"]),
+                           "unparsed_step_lines": d.get("unparsed_step_lines", 0)})
+        return {"run": run_id, "stages": stages, "kind": spec[4],
+                "has_training": any(stage_kind(n) == "train" for n, _, _ in spec[3]),
                 "reward_log": (spec[2] / "reward_log.jsonl").exists()}
 
     def metrics(self, run_id: str, stage: str, compare: bool = False) -> Optional[dict]:
@@ -744,9 +953,13 @@ class Board:
         if not spec or stage not in {n for n, _, _ in spec[3]}:      # only known stage names
             return None
         m = re.match(r"iter(\d)_(\w+)$", stage)
+        ab = re.fullmatch(r"ablate_micro\d+", stage)
         targets = [stage]
         if compare and m:
             targets = [f"iter{t}_{m.group(2)}" for t in (1, 2, 3)]
+        elif compare and ab:   # the ablation runs next to P0's own iteration-3 solver (micro-batch 1)
+            targets = ["iter3_solver"] + [n for n, _, _ in ABLATE_STAGES if re.fullmatch(r"ablate_micro\d+", n)]
+            m = ab
         series = {}
         for name in targets:
             log = spec[2] / "logs" / f"{name}.log"
@@ -779,7 +992,9 @@ class Board:
         spec = next((s for s in self.specs if s[0] == run_id), None)
         if not spec:
             return None
-        logs = sorted((spec[2] / "logs").glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+        names = {n for n, _, _ in spec[3]}       # only this run's stages (P0 and its ablation share a dir)
+        logs = sorted((p for p in (spec[2] / "logs").glob("*.log") if p.stem in names or p.stem.startswith("retriever")),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
         if not logs:
             return {"file": None, "lines": []}
         return {"file": logs[0].name, "lines": [ln[:400] for ln in clean_lines(tail_text(logs[0], 200_000))[-lines:]]}

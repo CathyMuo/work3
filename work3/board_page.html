@@ -156,7 +156,7 @@ details { border-top:1px solid var(--line); padding:8px 0 2px; margin-top:10px; 
       <div class="ctl">
         <label>运行 <select id="c-run"></select></label>
         <label>阶段 <select id="c-stage"></select></label>
-        <label><input type="checkbox" id="c-cmp"> 叠加三轮对比</label>
+        <label><input type="checkbox" id="c-cmp"> <span id="c-cmp-l">叠加三轮对比</span></label>
         <label>平滑 <select id="c-smooth"><option value="0">无</option><option value="0.6">0.6</option><option value="0.8">0.8</option><option value="0.9">0.9</option></select></label>
         <button id="c-def">常用指标</button> <button id="c-val">验证 EM</button> <button id="c-time">耗时 / 吞吐</button> <button id="c-none">清空</button>
         <span class="mute" id="c-info"></span>
@@ -164,6 +164,7 @@ details { border-top:1px solid var(--line); padding:8px 0 2px; margin-top:10px; 
       <div id="c-groups"></div>
     </div>
     <div class="charts" id="c-charts"></div>
+    <div class="card" id="c-eval" hidden><h2>评测 EM（各轮、各数据集；完整 51,713 题）</h2><div class="charts" id="c-eval-charts"></div></div>
     <div class="card" id="c-reward" hidden><h2>P2 出题奖励日志（每步一次）</h2><div class="charts" id="c-reward-charts"></div></div>
     <div class="card"><h2>GPU 与检索服务历史（看板启动后每 10 秒采样，保留 6 小时）</h2><div class="charts" id="c-hist"></div></div>
   </section>
@@ -243,6 +244,14 @@ function lanesHtml(r) {
   }).join("") + `</div>`;
 }
 
+// P1 pool: questions done, lucky re-runs, and the k histogram so far (k = successes out of 5)
+function p1Stats(p) {
+  const k = p.k_hist || {}, n = Object.values(k).reduce((a, b) => a + b, 0) || 1;
+  return `<div class="small">题目 ${p.questions} / ${p.drawn || "—"}，运气重测 ${p.lucky} / ${p.lucky_total}。` +
+    `解题成功次数 k 的分布：` + Object.entries(k).map(([kk, c]) => `k=${kk} <b>${c}</b>（${Math.round(c / n * 100)}%）`).join("，") +
+    `<span class="mute">；判定需要 k=1 和 k=3–4 各至少 60 题</span></div>`;
+}
+
 function nowBox(r) {
   const c = r.current;
   if (!c) {
@@ -262,12 +271,15 @@ function nowBox(r) {
   if (c.explain) h += `<div class="nx">${esc(c.explain)}</div>`;
   if (c.fraction != null || left != null) {
     const pctv = c.fraction != null ? c.fraction : (anyBar ? anyBar.n / anyBar.total : 0);
-    const steps = c.steps_total ? `训练第 ${c.steps_done} / ${c.steps_total} 步` : (anyBar ? `${anyBar.n} / ${anyBar.total}` : "");
+    const steps = c.progress_text || (c.steps_total ? `训练第 ${c.steps_done} / ${c.steps_total} 步` : (anyBar ? `${anyBar.n} / ${anyBar.total}` : ""));
     h += `<div class="nb main"><span>本步骤进度</span><div class="bar"><i style="width:${(pctv * 100).toFixed(1)}%"></i></div>
       <em><b>${Math.round(pctv * 100)}%</b>${steps ? `（${steps}）` : ""}</em></div>`;
     h += `<div class="neta">${left != null ? `⏱ 本步骤预计还需 <b>${hms(left)}</b>，约 <b>${clock(finish)}</b> 完成` : "⏱ 本步骤剩余时间暂时无法估计"}` +
-         (basis ? ` <span class="mute small">（${esc(basis)}；出题者后期每步会越来越慢）</span>` : "") + `</div>`;
+         (c.elapsed_seconds != null ? `<span class="mute small">（已用 ${hms(c.elapsed_seconds)}）</span>` : "") +
+         (basis ? ` <span class="mute small">${esc(basis)}${/challenger/.test(c.stage) ? "；出题者后期每步会越来越慢" : ""}</span>` : "") + `</div>`;
   }
+  if (c.p1) h += p1Stats(c.p1);
+  if (c.kind === "train") h += `<div class="mute small">训练指标曲线：见“训练曲线”页（选择本运行和本阶段）。</div>`;
   const ro = Object.entries(c.bars || {}).find(([k]) => /Rollout/.test(k));
   if (ro) {
     const rl = ro[1].remaining_s ?? tqdmLeft(ro[1].info);
@@ -284,7 +296,7 @@ function runCard(r) {
   let h = `<div class="card run"><div class="rh"><h2>${esc(r.title)}</h2>`;
   if (r.summary) { const v = r.summary.verdict; h += `<span class="ps ${v === "PASS" || v === "GO" ? "done" : v === "INVALID" ? "stalled" : "failed"}">判定：${esc(v)}</span>`; }
   h += `</div><div class="overall"><div class="bar big"><i style="width:${pctAll}%"></i></div><div class="ov"><b>${pctAll}%</b>` +
-       (r.started && r.eta_seconds > 0 ? `<span>整个${esc(r.title.split(" ")[0])}还需约 <b>${hms(r.eta_seconds)}</b>${days(r.eta_seconds)}，预计 <b>${clock(r.finish_at)}</b> 完成</span>`
+       (r.started && r.eta_seconds > 0 ? `<span>整个${r.kind === "ablate" ? "消融" : esc(r.title.split(" ")[0])}还需约 <b>${hms(r.eta_seconds)}</b>${days(r.eta_seconds)}，预计 <b>${clock(r.finish_at)}</b> 完成</span>`
         : r.started ? `<span>已完成</span>` : `<span>尚未开始，预计需 ${hms(r.est_total_seconds)}</span>`) +
        `<span class="mute small">按已完成步骤的实测耗时估计</span></div></div>`;
   h += nowBox(r) + lanesHtml(r);
@@ -292,6 +304,12 @@ function runCard(r) {
     h += `<p class="small stalled">⚠ ${r.teardown_warnings.length} 个步骤在产物完整写完之后、进程退出时报错（` +
          r.teardown_warnings.map(w => `${esc(w.label)}：退出码 ${w.rc}${w.at ? "，" + clock(w.at) : ""}`).join("；") +
          `）。产物已逐项检查完整，流程已自动继续，不影响结果。</p>`;
+  }
+  if (r.kind === "p1") for (const [name, p] of Object.entries(r.p1_pools || {}))
+    if (!(r.current && r.current.stage === name)) h += `<div class="small"><b>${esc(name)}</b>：` + p1Stats(p) + `</div>`;
+  if (r.kind === "ablate" && r.evals && Object.keys(r.evals).length) {
+    h += `<div class="emrow">` + Object.entries(r.evals).map(([m, e]) => `<div class="emc"><span>${m.replace("micro", "微批次 ")}</span><b>${e && e.average != null ? e.average.toFixed(3) : "—"}</b><em>P0 第 3 轮 0.307（微批次 1）</em></div>`).join("") + `</div>` +
+         (r.ablate_done ? `<p class="small">对比结果：<code>work3_p0/p0_diag_ablate.json</code>（判定规则见 DECISION_LOG 2026-11-13 (b)）。</p>` : "");
   }
   if (r.kind === "p0" && r.evals && Object.keys(r.evals).length) {
     h += `<div class="emrow">` + Object.entries(r.evals).map(([t, e]) => `<div class="emc"><span>${t === "0" ? "基座模型" : "第 " + t + " 轮"}</span><b>${e && e.average != null ? e.average.toFixed(3) : "—"}</b><em>论文 ${({"0": "—", "1": "0.304", "2": "0.319", "3": "0.326"})[t]}</em></div>`).join("") +
@@ -427,9 +445,11 @@ async function curInit() {
 async function curStages() {
   if (!cur.run) return;
   const st = await (await fetch("/api/stages?run=" + encodeURIComponent(cur.run))).json();
-  const opts = st.stages.map(x => `<option value="${esc(x.name)}">${esc(x.label)}</option>`).join("");
-  $("#c-stage").innerHTML = opts || `<option value="">（还没有训练日志）</option>`;
-  const running = [...st.stages].reverse().find(x => /challenger|solver/.test(x.name));
+  cur.meta = st;
+  const opts = st.stages.map(x => `<option value="${esc(x.name)}">${esc(x.label)}（${x.steps ? x.steps + " 步有记录" : "暂无 step 记录"}）</option>`).join("");
+  $("#c-stage").innerHTML = opts || `<option value="">${st.has_training ? "（训练还没开始）" : "（这个运行没有训练阶段）"}</option>`;
+  $("#c-cmp-l").textContent = st.kind === "ablate" ? "叠加对比（P0 第 3 轮 / 微批次 2 / 微批次 1）" : "叠加三轮对比";
+  const running = [...st.stages].reverse().find(x => x.steps > 0) || [...st.stages].reverse()[0];
   if (cur.stage && st.stages.some(x => x.name === cur.stage)) $("#c-stage").value = cur.stage;
   else if (running) $("#c-stage").value = running.name;
   cur.stage = $("#c-stage").value;
@@ -439,8 +459,36 @@ async function curStages() {
 
 function stageType(stage) { return (stage || "").replace(/^iter\d_/, "").replace(/\d$/, ""); }
 
+const DS = ["nq", "triviaqa", "popqa", "hotpotqa", "2wikimultihopqa", "musique", "bamboogle"];
+const PAPER_AVG = {1: 0.304, 2: 0.319, 3: 0.326};
+async function renderEval() {
+  let s; try { s = await (await fetch("/api/state")).json(); } catch (e) { return; }
+  const r = (s.runs || []).find(x => x.id === cur.run);
+  const box = $("#c-eval"), evs = (r && r.evals) || {};
+  if (!r || !Object.keys(evs).length) { box.hidden = true; return; }
+  box.hidden = false;
+  if (r.kind === "ablate") {
+    const p0 = (s.runs.find(x => x.id === "p0") || {}).evals || {};
+    const cols = [["P0 第 3 轮（微批次 1）", p0["3"]], ...Object.entries(evs).map(([m, e]) => [m.replace("micro", "重训 · 微批次 "), e])];
+    $("#c-eval-charts").innerHTML = `<table class="small"><tr><th>数据集</th>${cols.map(c => `<th>${esc(c[0])}</th>`).join("")}</tr>` +
+      [...DS, "average"].map(d => `<tr><td>${d === "average" ? "<b>平均</b>" : d}</td>${cols.map(c => { const e = c[1] || {}; const v = d === "average" ? e.average : (e.em || {})[d]; return `<td>${v != null ? v.toFixed(3) : "—"}</td>`; }).join("")}</tr>`).join("") + `</table>`;
+    return;
+  }
+  const its = Object.keys(evs).map(Number).sort();
+  const xfmt = v => (Number.isInteger(v) ? (v === 0 ? "基座" : "第" + v + "轮") : "");
+  const line = (name, f) => ({name, xs: its, ys: its.map(t => { const e = evs[String(t)]; return e ? f(e) : null; })});
+  $("#c-eval-charts").innerHTML =
+    lineChart("ev-avg", "7 数据集平均 EM：本次 vs 论文", [line("本次", e => e.average), {name: "论文", xs: [1, 2, 3], ys: [PAPER_AVG[1], PAPER_AVG[2], PAPER_AVG[3]]}], {legend: true, xfmt, xlabel: "轮次"}) +
+    lineChart("ev-ds", "各数据集 EM", DS.map(d => line(d, e => (e.em || {})[d] ?? null)), {legend: true, xfmt, xlabel: "轮次"});
+}
+
 async function curLoad() {
-  if (!cur.run || !cur.stage) { $("#c-charts").innerHTML = ""; return; }
+  renderEval();
+  if (!cur.run || !cur.stage) {
+    $("#c-groups").innerHTML = cur.meta && !cur.meta.has_training
+      ? `<p class="mute">这个运行没有训练阶段（P1 只做采样诊断），进度、k 分布和预计时间见“实验进度”页。</p>` : "";
+    $("#c-charts").innerHTML = ""; return;
+  }
   const cmp = $("#c-cmp").checked ? 1 : 0;
   const d = await (await fetch(`/api/metrics?run=${encodeURIComponent(cur.run)}&stage=${encodeURIComponent(cur.stage)}&compare=${cmp}`)).json();
   cur.data = d;
@@ -467,7 +515,8 @@ function renderGroups(keys) {
 function renderCharts() {
   const d = cur.data; if (!d) return;
   const a = +$("#c-smooth").value, names = Object.keys(d.series);
-  const label = n => d.compare ? n.replace(/_.*/, "").replace("iter", "第") + "轮" : "";
+  const label = n => !d.compare ? "" : /^ablate_micro/.test(n) ? n.replace("ablate_micro", "微批次 ")
+    : (d.stage || "").startsWith("ablate") ? "P0 第3轮（微批次 1）" : n.replace(/_.*/, "").replace("iter", "第") + "轮";
   let html = "";
   const rw = names.filter(n => d.series[n].rewards.length);
   if (rw.length) html += lineChart("rw", "出题者奖励（每步 Final rewards Avg）", rw.map(n => ({name: label(n) || "奖励", xs: d.series[n].rewards.map((_, i) => i + 1), ys: ema(d.series[n].rewards, a)})));
@@ -477,7 +526,9 @@ function renderCharts() {
     html += lineChart("m-" + k, k, ser, {legend: d.compare});
   }
   const n = names.reduce((m, x) => Math.max(m, d.series[x].rows.length), 0);
-  $("#c-info").textContent = `${n} 个 step、${cur.keys.size} 项指标已选${d.compare ? "；横轴为本轮内步数" : ""}`;
+  const unp = names.reduce((m, x) => m + (d.series[x].unparsed_step_lines || 0), 0);
+  $("#c-info").textContent = `${n} 个 step、${cur.keys.size} 项指标已选${d.compare ? "；横轴为本轮内步数" : ""}` +
+    (unp ? `；⚠ 有 ${unp} 行 step 记录无法解析，请把该阶段日志里任意一行 "step:" 发回家服` : "");
   $("#c-charts").innerHTML = html || `<div class="card mute">请在上方选择指标。</div>`;
 }
 

@@ -670,3 +670,45 @@ micro-batches.
 P2 does not start before both P1 and the ablation are in.
 
 Decision: `DIAG_V2_AND_MICROBATCH_ABLATION_R14`.
+
+## 2026-11-13 (c): Board shows progress, ETA and curves for every stage (tags `p0-r15`, `p1-r15`, `p2-r15`)
+
+**Problem.** The user reported that training curves appeared only for the
+iteration-1 proposer. Other stages showed no curves and no usable progress.
+
+**Gaps found.**
+
+- **Evaluation and P1 had no progress signal.** Evaluation stages and P1
+  pools fell back to "typical duration" guesses.
+- **The step-line parser was fragile.** It failed on numpy-2 / tensor reprs
+  (`np.float64(0.5)`), and the ETA path ignored them.
+- **Ablation stages were not on the board.**
+
+**Changes.** No experiment setting changes; this is the board, plus one
+start-time file per stage written by `run_p0.sh` and `run_p1.sh`.
+
+- **Progress per stage kind:**
+  - training: steps / 50, ETA from the latest five step times;
+  - question-pool generation: the generation bar, ignoring model-loading and
+    CUDA-graph bars;
+  - evaluation: verl's per-batch "validation generation end" lines, 203
+    batches of 256 questions;
+  - P1 pools: question records and lucky re-runs, from the JSONL files, with
+    the k histogram so far;
+  - other stages: typical duration since `logs/<stage>.start`.
+- **ETA fallback.** When no start time exists, the board estimates the rate
+  from its own observations.
+- **Curves.** Every training stage is listed with its recorded step count.
+  The numeric parser accepts numpy / tensor reprs, and the page flags step
+  lines it cannot parse.
+- **New curve sections.** Evaluation EM curves per dataset and iteration,
+  with the paper's averages. An ablation table compares P0's iteration-3
+  solver with the retrained micro-batch 2 and 1 solvers.
+- **Ablation card.** A separate "P0 消融" run card has its own lanes and
+  compare overlay.
+- **Verification.** Checked on a synthetic run directory in the factory's log
+  formats (plain, numpy-2, and ANSI-coloured step lines; generation and
+  evaluation logs; a running ablation; a running P1 pool) in the browser.
+  There are 8 new unit tests.
+
+Decision: `BOARD_ALL_STAGES_R15`.

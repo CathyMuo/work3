@@ -1,6 +1,6 @@
 # P1 厂内指导：噪声诊断（P0 跑完后运行）
 
-版本：tag `p1-r14`（2026-11-13：诊断补上检索到的查询条数和“标准答案是否被检索到”；新增微批次消融；P1 运行脚本与 r12 相同）。协议（已冻结，不要改）：[research/protocols/P1_noise_diagnosis.md](../../research/protocols/P1_noise_diagnosis.md)，执行以末尾的 **Addendum 2026-11-06** 为准。
+版本：tag `p1-r15`（2026-11-13：诊断补上检索到的查询条数和“标准答案是否被检索到”；新增微批次消融；P1 运行脚本与 r12 相同）。协议（已冻结，不要改）：[research/protocols/P1_noise_diagnosis.md](../../research/protocols/P1_noise_diagnosis.md)，执行以末尾的 **Addendum 2026-11-06** 为准。
 
 **前提**：P0 全部跑完（包括 `gate`），且 `p0_summary.json` 已经发回家服。只要 P0 不是 INVALID 就可以跑 P1；P0 是否 PASS 由家服判断，P1 的产物照样有用。
 
@@ -21,7 +21,7 @@
 
 ```bash
 cd <工作目录>/work3
-git fetch --tags && git checkout p1-r14
+git fetch --tags && git checkout p1-r15
 python -m work3.p0_diag --eval-root $DRZERO_DIR/work3_p0/eval --test-parquet $DRZERO_DIR/data/test.parquet --out $DRZERO_DIR/work3_p0/p0_diag.json
 ```
 
@@ -43,7 +43,7 @@ bash scripts/p0/run_p0.sh ablate 2>&1 | tee -a $DRZERO_DIR/work3_p0/ablate.log
 ## 1. 准备
 
 ```bash
-cd <工作目录>/work3 && git fetch --tags && git checkout p1-r12
+cd <工作目录>/work3 && git fetch --tags && git checkout p1-r15
 conda activate drzero
 # 与 P0 相同的变量：DRZERO_DIR、MODEL_3B、E5_MODEL、NGPU；端口默认 8100 / 8101
 P1=<工作目录>/work3/scripts/p1/run_p1.sh

@@ -76,6 +76,7 @@ PY
 timed() {
   local name="$1"; shift
   local t0; t0=$(date +%s)
+  echo "$t0" > "$P1_OUT/logs/$name.start"   # stage start, for the board's progress / ETA
   log "start $name"
   set +e
   ( export WORK3_P0_TAG="$TAG"; "$@" ) 2>&1 | tee "$P1_OUT/logs/$name.log"

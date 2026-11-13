@@ -138,6 +138,7 @@ timed_rc() {  # timed_rc <name> <cmd...>: run tagged, log, record wall-clock sec
   local t0; t0=$(date +%s)
   STAGE_T0="$t0"   # outputs accepted after a nonzero exit must be written after this
   local logf="$OUT_ROOT/logs/$name.log"
+  echo "$t0" > "$OUT_ROOT/logs/$name.start"   # stage start, for the board's progress / ETA
   log "start $name"
   # The stage writes straight to its log file and the console follows it with `tail -f`. No pipe:
   # upstream scripts leave servers running in the background, and with `cmd | tee` those servers
