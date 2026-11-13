@@ -712,3 +712,72 @@ start-time file per stage written by `run_p0.sh` and `run_p1.sh`.
   There are 8 new unit tests.
 
 Decision: `BOARD_ALL_STAGES_R15`.
+
+## 2026-11-13 (d): Multi-hop loss is a retrieval-recall loss; order unchanged (P1, then the ablation)
+
+**Evidence (factory feedback #12, `p0_diag` v2).** The JSON was announced but
+not attached; the numbers below are the factory's.
+
+| Multi-hop, iteration | EM | gold retrieved (R) | wrong, never retrieved | wrong, retrieved |
+| --- | --- | --- | --- | --- |
+| 1 | 0.281 | 0.470 | 0.481 | 0.238 |
+| 3 | 0.246 | 0.404 | 0.547 | 0.206 |
+
+**Decomposition.**
+
+- Accuracy given retrieval, (R − wrong & retrieved) / R, is unchanged:
+  0.494 at iteration 1, 0.490 at iteration 3.
+- Accuracy without retrieval, (1 − R) − wrong & never retrieved, is 0.049 at
+  both.
+- So ΔEM ≈ 0.49 × ΔR = −0.032, against an observed −0.035. The multi-hop loss
+  is almost entirely lower recall, not worse reading.
+- Single-hop recall rose from 0.692 to 0.712, and accuracy given retrieval
+  from 0.643 to 0.670.
+- Queries per multi-hop question fell about 21%, from 1.556 × 1.153 = 1.79 to
+  1.404 × 1.009 = 1.42.
+- Gold retrieval is a lenient proxy: the normalised gold string appears in a
+  retrieved passage.
+
+**What the factory's reading gets wrong.**
+
+1. **Queries per call collapsed mostly from the base model to iteration 1**
+   (1.45–1.82 → about 1.0). That is the iteration whose EM rose 2.5×, and
+   whose no-answer share fell from about 0.50 to 0.02–0.09. The base model
+   mostly overran the 2,560-token response budget. Fewer queries per call is
+   largely the model learning to fit that budget, which is the upstream
+   setting the paper used too. It cannot by itself explain iteration 1→3.
+   From iteration 1 to 3, multi-hop queries per call moved only 1.15 → 1.01;
+   fewer calls and fewer queries together cut recall.
+2. **Tool responses are not truncated.** At the pinned commit, upstream's
+   SGLang rollout path, the one Dr. Zero uses, does not reference
+   `max_tool_response_length` (`sglang_rollout.py` and `schemas.py` were
+   checked), and the search tool's formatting has no length limit.
+   Truncation therefore does not explain the query collapse.
+3. **"chars" is the solver's response length.** It is still not evidence for B.
+
+**Decision.**
+
+1. **P1 first, then `run_p0.sh ablate`, as decided in (b).**
+   - P1 is the frozen, half-day test of whether NCP's premise holds.
+   - The ablation decides whether P0's multi-hop decline comes from our
+     micro-batch deviation.
+   - P2 needs both, so the shorter decision goes first.
+   - The GPUs are currently used by Work 2.
+2. **NCP does not pivot to fix a length bias.**
+   - Loss normalisation (Dr. GRPO) is prior work, not our contribution.
+   - If the ablation finds CONTRIBUTES, the corrected weighting becomes the
+     shared base of all P2 arms. The Dr. Zero arm is then re-run under it, and
+     NCP is tested on top only if P1 is GO.
+   - If NO EVIDENCE, recall collapse is a property of the self-play loop. It is
+     then a finding in its own right, worth a direction of its own if P1 is
+     NO-GO.
+3. **P2 reports the search behaviour of every arm** (P2 Addendum
+   2026-11-13, exploratory). Whether NCP changes recall is then measured
+   rather than argued.
+4. **P0 in the paper.** Report it as a reproduction within the frozen
+   tolerance (0.307 vs 0.326). Disclose in the appendix:
+   - the full per-iteration, per-dataset trajectory;
+   - the multi-hop divergence from the paper and the recall decomposition;
+   - our micro-batch deviation, with the ablation result.
+
+Decision: `RECALL_DECOMPOSITION_ORDER_UNCHANGED`.

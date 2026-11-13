@@ -53,3 +53,17 @@ Let A_t(arm) be the iteration-t seven-dataset average EM (same definition as P0)
 `GO` → register the main experiments (more seeds, 7B, ablations) in a new
 protocol before running them. `NO-GO` → stop NCP as the Work 3 method and
 re-scope with the user. Thresholds are not revisited after results.
+
+## Addendum 2026-11-13: exploratory search-behaviour report (written before any P2 data)
+
+P0 showed that iterations 1 to 3 lose multi-hop EM because the solver
+retrieves the gold answer less often (factory feedback #11, #12). The P2
+summary therefore also reports `work3/p0_diag.py` on every arm's evaluation
+dumps, per arm and iteration, for single- and multi-hop questions:
+
+- search calls and queries per question;
+- the share of questions whose gold answer appears in a retrieved passage;
+- the split of wrong answers into "gold never retrieved" and "gold retrieved".
+
+This report is exploratory. It is not part of the gate, and the arms, the
+setup, the GO rule and the verdict are unchanged.

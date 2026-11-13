@@ -3,8 +3,8 @@
   "project": "work3",
   "updated_at": "2026-11-13",
   "current_stage": "P1",
-  "status": "P0 PASS (0.3071). p0_diag (feedback #11): search calls per question fell from iteration 1 to 3 on single- and multi-hop questions; multi-hop flips 2,609 correct->wrong vs 1,840 wrong->correct (McNemar p 8e-31). Open: queries per call, gold-answer retrieval, and whether our micro-batch-1 deviation (per-sequence length normalisation) drives it.",
-  "next_action": "Factory: checkout p1-r14; p0_diag v2 (CPU, send the JSON), then P1, then `run_p0.sh ablate` (iteration-3 solver retrained with micro-batch 2 and 1). Home: apply the pre-registered ablation rule (DECISION_LOG 2026-11-13 b); P1 verdict decides NCP.",
+  "status": "P0 PASS (0.3071). p0_diag v2: multi-hop EM loss from iteration 1 to 3 is almost entirely lower gold-answer recall (0.470 -> 0.404; accuracy given retrieval flat at 0.49); queries per multi-hop question -21%. Cause (micro-batch length bias vs the self-play loop) open until the ablation.",
+  "next_action": "Factory: when Work 2 frees the GPUs, P1 (pool1, pool3, parity, summary), then `run_p0.sh ablate`; send p0_diag.json as a file. Home: apply the pre-registered ablation rule; P1 verdict decides NCP.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
