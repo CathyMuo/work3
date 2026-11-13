@@ -1,6 +1,6 @@
 # P0 厂内指导：复现 Dr. Zero Qwen2.5-3B（4×H800）
 
-版本：tag `p0-r12`（2026-11-11：修复“阶段跑完后卡住不往下走”的根因；`cleanup` 会先停掉正在跑的 run_p0.sh；同一目录同时只能跑一个 run_p0.sh；训练参数与 p0-r8 完全相同）。
+版本：tag `p0-r14`（2026-11-13：P0 已完成并 PASS；新增 `ablate` 阶段（微批次消融，见 P1 指导第 0 节），只写入单独的目录；P0 各阶段的行为与 r12 相同）。
 协议（已冻结，不要改）：[research/protocols/P0_drzero_reproduction.md](../../research/protocols/P0_drzero_reproduction.md)，执行以末尾各节 **Addendum** 为准。
 判定：第 3 轮 7 个数据集平均 EM ≥ **0.306** 为 PASS（论文 0.326）。
 

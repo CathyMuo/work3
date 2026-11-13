@@ -6,6 +6,7 @@
 #   check | prepare | patch | iter1 | iter2 | iter3 | eval0 | eval1 | eval2 | eval3 | gate | cleanup | probe
 #   all   (unattended: iter1 eval1 iter2 eval2 iter3 eval3 eval0 gate; finished stages are skipped,
 #          a failed stage is retried once from where it stopped -- MAX_ATTEMPTS, ALL_STAGES)
+#   ablate (iteration-3 solver retrained with micro-batch 2 and 1, evaluated; ABL_MICROS="2 1")
 #
 # Required env:
 #   DRZERO_DIR    Dr. Zero checkout at the pinned commit (data/, corpus/, checkpoints/ live here)
@@ -542,8 +543,8 @@ start_retriever() {
   bash "$WORK3_DIR/scripts/p0/wait_retriever.sh" "$RET_PORT"
 }
 
-eval_model() {  # eval_model <t> <model_path>
-  local t="$1" model="$2" out="$OUT_ROOT/eval/iter$1"
+eval_model() {  # eval_model <t> <model_path> [out_dir]
+  local t="$1" model="$2" out="${3:-$OUT_ROOT/eval/iter$1}"
   need "$model/config.json"; need data/test.parquet; need "$PATCHED/search_tool_config.yaml"
   rm -rf "$out"; mkdir -p "$out"
   start_retriever || return 3
@@ -579,6 +580,48 @@ stage_eval() {  # stage_eval <t>
   cleanup_servers
   skip_complete "eval${t}" eval "$OUT_ROOT/eval/iter$t" data/test.parquet && return 0
   checked "eval${t}" eval "$OUT_ROOT/eval/iter$t" data/test.parquet -- eval_model "$t" "$model"
+}
+
+# Micro-batch ablation (factory feedback #11). verl's default loss_agg_mode "token-mean" averages
+# over the tokens of one micro-batch, then over micro-batches; with micro-batch 1 (p0-r8, to avoid
+# the OOM) every response is length-normalised on its own -- the per-sequence weighting that
+# favours short correct responses (Dr. GRPO). Upstream's micro-batch 2 normalises over pairs.
+# The ablation retrains the iteration-3 solver (from solver_iter2_hf on pool 3, as in P0) with
+# micro-batch 2 and, as a noise floor, once more with micro-batch 1, then evaluates both.
+# Everything goes to separate directories; P0's checkpoints and evaluations are never touched.
+stage_ablate_one() {  # stage_ablate_one <micro>
+  local m="$1" tag="micro$1"
+  local base="$CKPT-ablate/solver_iter3_$tag"
+  local script="$OUT_ROOT/ablate/iter3_solver_$tag.sh"
+  local out="$OUT_ROOT/eval_ablate/$tag"
+  need "$PATCHED/iter3_solver.sh"
+  need "data/zero_challenger_iter3_ratio${RATIO}_grpo_batch_group1-5_${MODEL_NAME}.parquet"
+  need "$CKPT/solver_iter2_ratio${RATIO}_grpo_group5_${MODEL_NAME}/solver_iter2_hf/config.json"
+  mkdir -p "$OUT_ROOT/ablate"
+  sed "s#^batch_per_gpu=.*#batch_per_gpu=$m#" "$PATCHED/iter3_solver.sh" > "$script"
+  grep -q "^batch_per_gpu=$m\$" "$script" || { log "ablate: batch_per_gpu not set in $script"; exit 2; }
+  if grep -q "default_local_dir" "$script"; then log "ablate: solver script already sets default_local_dir"; exit 2; fi
+  cleanup_servers
+  skip_complete "ablate_$tag" ckpt "$base" 50 "$NGPU" ||
+    checked "ablate_$tag" ckpt "$base" 50 "$NGPU" -- \
+      bash "$script" "$RATIO" "trainer.total_training_steps=50" "trainer.default_local_dir=$base"
+  skip_complete "ablate_${tag}_convert" hf "$base/hf" ||
+    checked "ablate_${tag}_convert" hf "$base/hf" -- \
+      python -m verl.model_merger merge --backend fsdp --local_dir "$base/global_step_50/actor" --target_dir "$base/hf"
+  cleanup_servers
+  skip_complete "ablate_${tag}_eval" eval "$out" data/test.parquet ||
+    checked "ablate_${tag}_eval" eval "$out" data/test.parquet -- eval_model 3 "$DRZERO_DIR/$base/hf" "$out"
+}
+
+stage_ablate() {
+  local m args=()
+  for m in ${ABL_MICROS:-2 1}; do
+    stage_ablate_one "$m"
+    args+=(--compare "micro$m=$OUT_ROOT/eval_ablate/micro$m")
+  done
+  python -m work3.p0_diag --eval-root "$OUT_ROOT/eval" --test-parquet data/test.parquet "${args[@]}" \
+    --out "$OUT_ROOT/p0_diag_ablate.json" | tee "$OUT_ROOT/p0_diag_ablate.txt"
+  log "ablation done: $OUT_ROOT/p0_diag_ablate.json"
 }
 
 stage_all() {  # unattended: every remaining P0 stage in order; finished stages are skipped
@@ -617,7 +660,7 @@ PY
 }
 
 case "${1:-}" in
-  prepare|patch|iter1|iter2|iter3|eval0|eval1|eval2|eval3|gate|all) take_lock ;;
+  prepare|patch|iter1|iter2|iter3|eval0|eval1|eval2|eval3|gate|all|ablate) take_lock ;;
 esac
 
 case "${1:-}" in
@@ -628,6 +671,7 @@ case "${1:-}" in
   eval0|eval1|eval2|eval3) stage_eval "${1#eval}" ;;
   gate) stage_gate ;;
   all) stage_all ;;
+  ablate) stage_ablate ;;
   cleanup) stop_orchestrators; cleanup_servers ;;
   probe)   # read-only speed diagnosis of whatever stage is running now (factory feedback #3)
     python -m work3.speed_probe --seconds "${PROBE_SECONDS:-120}" --reward-port "$REWARD_PORT" \

@@ -574,3 +574,99 @@ Decision: `NO_PIPE_STAGE_LOGS_R12`.
   decision, made then, not now.
 
 Decision: `P0_PASS_START_P1_R13`.
+
+## 2026-11-13 (b): Search decline confirmed, cause open; check our own micro-batch deviation first (tags `p0-r14`, `p1-r14`)
+
+**Evidence (factory feedback #11, `p0_diag` v1).**
+
+- **Search calls per question fell at every iteration.**
+  - Single-hop: 1.20 → 1.14 → 1.08.
+  - Multi-hop: 1.56 → about 1.48 → 1.40.
+  - Paired, iteration 1→3: −0.12 and −0.15 per question.
+- **Multi-hop questions lost ground overall.** From iteration 1 to 3, 2,609
+  flipped correct → wrong and 1,840 wrong → correct (exact McNemar
+  p = 8e-31).
+- **Multi-hop EM by search count.** EM with 2 calls rose from 0.315 to 0.363.
+  EM with 1 call fell from 0.300 to 0.239, while the share of 1-call
+  trajectories grew from 62% to 74%.
+- **Statistics leave out repeated question text.** Questions whose text
+  repeats within a dataset (about 2,100, mostly popqa) are dropped, so the
+  per-dataset EMs differ slightly from the gate's.
+
+**What the factory's reading over-states.**
+
+1. **Not "noise vs. strategy".** E is a solver behaviour. A (a noisy
+   proposer reward) is a possible upstream driver of what the solver is
+   trained on. The two are not exclusive, and P1 still tests A as frozen.
+2. **Search *calls* are not retrieval.** One call may carry several queries,
+   and v1 did not count queries.
+3. **EM by search count is observational.** The model chooses when to search
+   again, so these buckets are selected, not assigned. The 1-call bucket's
+   falling EM fits a shift of answerable questions to premature answers, but
+   does not prove it.
+4. **"chars" is the solver's response length on benchmark questions**, not
+   question length. It says nothing about B.
+5. **Transcription error.** The factory's table contained values (`0.000`)
+   that the script's 2-decimal format cannot print. The JSON file is now
+   requested instead.
+
+**Our own deviation, a candidate cause.** verl's default `loss_agg_mode`
+`token-mean` averages over the tokens of one micro-batch, then over
+micro-batches.
+
+- p0-r8 cut the micro-batch from 2 to 1 to avoid an OOM, for proposer steps
+  21–150 and every solver. Each response is then length-normalised on its
+  own.
+- This per-sequence weighting is the bias Dr. GRPO describes. Short correct
+  responses gain per-token weight and long wrong ones lose penalty. That
+  pushes toward fewer searches.
+- Upstream's micro-batch 2 normalises over random pairs, which is weaker.
+- The 2026-11-10 note called this difference "tiny". Given E, that judgement
+  must be tested, not assumed.
+
+**Decision.**
+
+1. **`p0_diag` v2 (CPU).** It reports queries per question and per call, and
+   whether the gold answer (from `data/test.parquet`) appears in any retrieved
+   passage. It splits wrong answers into "gold never retrieved" (premature
+   stop, or search went astray) and "gold retrieved" (reading or reasoning
+   failure), and reports flips by search change.
+2. **P1 runs as frozen.** It is unchanged and runs next.
+3. **`run_p0.sh ablate` after P1.**
+   - It retrains the iteration-3 solver exactly as in P0 (from
+     `solver_iter2_hf` on pool 3) twice: once with micro-batch 2, once again
+     with micro-batch 1 as a noise floor.
+   - It evaluates both and compares them with P0's iteration-3 solver.
+   - Outputs go to separate directories.
+
+**Pre-registered rule for the ablation, written before any ablation data.**
+
+- **Runs:**
+  - M1 = P0's iteration-3 solver;
+  - R1 = the micro-batch-1 retrain;
+  - R2 = the micro-batch-2 retrain.
+- **Metrics:**
+  - EM_mh = the mean over hotpotqa, 2wiki, musique and bamboogle of
+    per-dataset EM, from `p0_diag_ablate.json`;
+  - S_mh = multi-hop search calls per question.
+- **Noise floor:** d0 = |EM_mh(R1) − EM_mh(M1)|.
+- **CONTRIBUTES** if EM_mh(R2) − EM_mh(R1) ≥ max(0.015, 2·d0) and
+  S_mh(R2) > S_mh(R1). Then:
+  - our micro-batch deviation contributes to the multi-hop decline;
+  - P2 cannot reuse P0 as the Dr. Zero arm under the current setting;
+  - how to restore upstream's weighting without the OOM is decided then.
+- **NO EVIDENCE** otherwise. Then E is treated as a property of the Dr. Zero
+  self-play loop in our setup.
+- **Limits.** One retrained iteration measures the solver-side effect of one
+  iteration only. It cannot cover the cumulative effect over three
+  iterations, or the effect on the proposer.
+
+**What does not change.**
+
+- The P0 verdict.
+- The P1 protocol and gate.
+- The P2 protocol.
+
+P2 does not start before both P1 and the ablation are in.
+
+Decision: `DIAG_V2_AND_MICROBATCH_ABLATION_R14`.

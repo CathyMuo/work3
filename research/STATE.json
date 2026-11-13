@@ -3,8 +3,8 @@
   "project": "work3",
   "updated_at": "2026-11-13",
   "current_stage": "P1",
-  "status": "P0 PASS (frozen gate): iteration-3 7-dataset average EM 0.3071 >= 0.306 (paper 0.326); iterations 0/1/2/3 = 0.1284/0.3168/0.3103/0.3071 (paper -/0.304/0.319/0.326). Single-hop mean rises like the paper (+0.029 vs +0.034, iter 1->3); multi-hop mean falls (-0.039 vs paper +0.013). Unattended r12 run: 27 stages, 35 h 39 min, no manual intervention.",
-  "next_action": "Factory: checkout p1-r13, run work3.p0_diag on the P0 eval dumps (CPU) and send the table, then run P1 (pool1, pool3, parity, summary). Home: read the search-behaviour diagnosis; P1 GO/NO-GO decides P2.",
+  "status": "P0 PASS (0.3071). p0_diag (feedback #11): search calls per question fell from iteration 1 to 3 on single- and multi-hop questions; multi-hop flips 2,609 correct->wrong vs 1,840 wrong->correct (McNemar p 8e-31). Open: queries per call, gold-answer retrieval, and whether our micro-batch-1 deviation (per-sequence length normalisation) drives it.",
+  "next_action": "Factory: checkout p1-r14; p0_diag v2 (CPU, send the JSON), then P1, then `run_p0.sh ablate` (iteration-3 solver retrained with micro-batch 2 and 1). Home: apply the pre-registered ablation rule (DECISION_LOG 2026-11-13 b); P1 verdict decides NCP.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -57,7 +57,7 @@
   "upstreams": {
     "drzero": "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
   },
-  "p0_release": "p0-r12",
-  "p1_release": "p1-r13",
+  "p0_release": "p0-r14",
+  "p1_release": "p1-r14",
   "p2_release": "p2-r12"
 }
