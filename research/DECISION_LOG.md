@@ -781,3 +781,69 @@ not attached; the numbers below are the factory's.
    - our micro-batch deviation, with the ablation result.
 
 Decision: `RECALL_DECOMPOSITION_ORDER_UNCHANGED`.
+
+## 2026-11-16: P1 NO-GO; the NCP direction stops; run the ablation, then re-survey (tags `p0-r16`, `p1-r16`, `p2-r16`)
+
+**Result (factory feedback #14; `research/results/P1_summary_20261116.json`).**
+
+| | pool 1 (base solver) | pool 3 (solver_iter2) | pooled |
+| --- | --- | --- | --- |
+| questions | 1,500 | 1,000 | 2,500 |
+| eta(k=1) | 0.680 | 0.679 | 0.680 |
+| eta(k in {3,4}) | 0.692 | 0.742 | 0.718 |
+| difference | −0.012 | −0.063 | −0.039, 95% CI [−0.123, +0.049] |
+
+- **Primary (a)** holds: eta(k=1) ≥ 0.35.
+- **Primary (b)** fails. Its CI upper bound, +0.049, is far below the
+  required +0.10, and both pools are negative.
+- **Secondary:** (c) false; (d) 0.293 < 0.30.
+- **Validity:** parity 6,000/6,000; new-search replays 18.7% < 20%; no
+  problems.
+- **Verdict: NO-GO.** Per the frozen rule, the NCP direction stops and P2 is
+  cancelled.
+
+**Reading.**
+
+1. **The noise share is high but flat in k.** It is about 0.7 in every k
+   group and in every hop group (the hop CIs overlap). NCP's weight
+   w = 1 − eta would therefore be nearly constant, and NCP would reduce to a
+   rescaled Dr. Zero reward. The mechanism NCP needs, noise concentrated
+   where the reward is highest, is absent. This is more than a missed
+   threshold.
+2. **eta ≈ 0.7 should not be quoted as an intrinsic limit of self-play.**
+   - It measures the variance from regenerating the final turn at
+     temperature 1 with permuted passages.
+   - Pool 1's own new-search rate, 28.3%, inflates it.
+   - Unreplayable originals, counted as zero noise, deflate it.
+3. **The pool comparison is confounded.** Pool 1 and pool 3 differ in both
+   the pool and the reward solver.
+4. **Few questions carry a training signal.** Even solver_iter2 never solves
+   55% of pool-3 questions and always solves 21.6%. Only about 23% (k 1–4)
+   give a nonzero GRPO advantage; pool 1 with the base solver gives 35%.
+5. **P1 does not explain P0's multi-hop recall collapse.** It rejects one
+   specific mechanism, the proposer drawn to lucky k = 1 questions.
+
+**Decision.**
+
+1. **Stop NCP; cancel P2.** The P2 guide is marked cancelled and the board's
+   roadmap shows it.
+2. **Run `run_p0.sh ablate` next.** Its pre-registered rule is in 2026-11-13
+   (b). It is now the key input for the next direction:
+   - **CONTRIBUTES:** the recall collapse is largely our micro-batch
+     artifact. It is not a direction by itself.
+   - **NO EVIDENCE:** "retrieval-recall collapse in self-evolving search
+     agents" enters the re-survey as the lead candidate.
+3. **Re-survey for a new direction, as frozen.** Inputs:
+   - the P0 recall decomposition;
+   - P1's flat noise;
+   - the low share of informative pool questions;
+   - the ablation verdict.
+
+   The direction is chosen after the ablation. Nothing else runs at the
+   factory until then.
+4. **Records are kept.** Whether P0 and P1 appear in a new paper, for example
+   as a negative result on reward noise, is decided with the new direction.
+5. **Venue.** ICML 2027 (about 01-16 abstract) is now tight. The 12-15 venue
+   decision stands; SIGIR 2027 remains the alternative.
+
+Decision: `P1_NO_GO_STOP_NCP`.

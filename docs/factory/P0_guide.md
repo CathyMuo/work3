@@ -1,6 +1,6 @@
 # P0 厂内指导：复现 Dr. Zero Qwen2.5-3B（4×H800）
 
-版本：tag `p0-r15`（2026-11-13：看板补齐每个阶段的进度、预计时间和训练曲线，加上消融那一组；脚本只多写一个阶段开始时间文件，其余行为与 r14 相同）。
+版本：tag `p0-r16`（2026-11-16：P1 已 NO-GO，P2 取消；当前只剩 `ablate` 阶段，运行说明见 P1 指导第 0 节；看板路线图显示 P2 已取消）。
 协议（已冻结，不要改）：[research/protocols/P0_drzero_reproduction.md](../../research/protocols/P0_drzero_reproduction.md)，执行以末尾各节 **Addendum** 为准。
 判定：第 3 轮 7 个数据集平均 EM ≥ **0.306** 为 PASS（论文 0.326）。
 

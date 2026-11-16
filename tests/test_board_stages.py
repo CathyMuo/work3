@@ -117,5 +117,20 @@ class AblationRunTest(unittest.TestCase):
             self.assertNotIn("ablate_micro2", [s["name"] for s in board.metric_stages("p0")["stages"]])
 
 
+class RoadmapTest(unittest.TestCase):
+    def test_p1_no_go_cancels_p2(self):
+        with tempfile.TemporaryDirectory() as t:
+            dz = Path(t) / "drzero"
+            (dz / "work3_p0" / "logs").mkdir(parents=True)
+            (dz / "work3_p1" / "logs").mkdir(parents=True)
+            (dz / "work3_p1" / "p1_summary.json").write_text(json.dumps(
+                {"verdict": "NO-GO", "pooled": {"eta_k1": 0.68, "diff": -0.04}}))
+            st = B.Board(str(dz), None).state()
+            rm = {p["key"]: p for p in st["roadmap"]}
+            self.assertEqual(rm["P1"]["status"], "未通过（NO-GO）")
+            self.assertEqual((rm["P2"]["status"], rm["P2"]["remaining_seconds"]), ("已取消（P1 未通过）", 0))
+            self.assertEqual(rm["M"]["remaining_seconds"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

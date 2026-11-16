@@ -1050,6 +1050,21 @@ def roadmap(runs: List[dict], p2: Optional[dict], state: dict) -> List[dict]:
     p2_res = (f"NCP−Dr.Zero {prim['ncp_minus_drzero'] * 100:+.1f} pp"
               if prim.get("ncp_minus_drzero") is not None else None)
     venue = (state.get("target_venue") or {})
+    p1_verdict = (p1.get("summary") or {}).get("verdict")
+    if p1_verdict == "NO-GO" and not (p2 or {}).get("verdict"):
+        # frozen rule: P1 NO-GO stops the NCP direction, so P2 and its main experiments never run
+        stopped = {"status": "已取消（P1 未通过）", "state": "pending", "est_seconds": 0, "remaining_seconds": 0}
+        out = _roadmap_list(phase, p0, p0_res, p1, p1_res, p2, p2_res, venue)
+        for ph in out:
+            if ph["key"] == "P2":
+                ph.update(stopped, what="NCP 方向按冻结规则停止；下一步：微批次消融 + 重新调研")
+            elif ph["key"] == "M":
+                ph.update(stopped, what="等新方向确定后另行登记")
+        return out
+    return _roadmap_list(phase, p0, p0_res, p1, p1_res, p2, p2_res, venue)
+
+
+def _roadmap_list(phase, p0, p0_res, p1, p1_res, p2, p2_res, venue) -> List[dict]:
     return [
         phase("P0", "P0 复现基线", "复现 Dr. Zero 3B 三轮自我进化", ["p0"],
               (p0.get("summary") or {}).get("verdict"), p0_res),
