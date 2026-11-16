@@ -1,6 +1,6 @@
 # P1 厂内指导：噪声诊断（P0 跑完后运行）
 
-版本：tag `p1-r16`（2026-11-16：P1 已完成，判定 NO-GO；现在只剩微批次消融）。协议（已冻结，不要改）：[research/protocols/P1_noise_diagnosis.md](../../research/protocols/P1_noise_diagnosis.md)，执行以末尾的 **Addendum 2026-11-06** 为准。
+版本：tag `p1-r16`（2026-11-16：P1 已完成，判定 NO-GO；微批次消融已完成）。协议（已冻结，不要改）：[research/protocols/P1_noise_diagnosis.md](../../research/protocols/P1_noise_diagnosis.md)，执行以末尾的 **Addendum 2026-11-06** 为准。
 
 **前提**：P0 全部跑完（包括 `gate`），且 `p0_summary.json` 已经发回家服。只要 P0 不是 INVALID 就可以跑 P1；P0 是否 PASS 由家服判断，P1 的产物照样有用。
 
@@ -8,7 +8,9 @@
 
 ---
 
-## 0. 反馈 #14 之后：P1 已完成（NO-GO），现在只跑微批次消融
+## 0. P1 和微批次消融均已完成
+
+消融结果见 [反馈 #15 回复](REPLY_20261116_fb15.md)。以下消融命令留作运行记录。
 
 P1 判定 **NO-GO**，结果存在 `research/results/P1_summary_20261116.json`。按冻结规则，NCP 方向停止，**P2 取消**。家服回复见 `docs/factory/REPLY_20261116_fb14.md`。
 

@@ -1,10 +1,10 @@
 # Work 3：零数据自我进化的搜索智能体
 
-**2026-11-06 状态：方向已确认，P0 / P1 门槛已冻结，等待厂内运行 P0。**
+**2026-11-16 状态：P0 通过，P1 NO-GO，NCP 已停止，P2 已取消。微批次消融完成，判定 NO EVIDENCE。**
 
 - 方向：递归自我改进（RSI）中的零数据自博弈搜索智能体（出题者 / 解题者共用同一模型，只靠检索环境提供监督）。P1 诊断协议见 [research/protocols/P1_noise_diagnosis.md](research/protocols/P1_noise_diagnosis.md)。
 - 基线：Dr. Zero（facebookresearch/drzero @ `98c4a6d`，verl 0.5 + SGLang）。
-- 当前任务：[P0 厂内指导](docs/factory/P0_guide.md)（tag `p0-r16`），之后 [P1 厂内指导](docs/factory/P1_guide.md)（tag `p1-r16`）、[P2 厂内指导](docs/factory/P2_guide.md)（tag `p2-r16`）；计划见 [实验计划](research/EXPERIMENT_PLAN.md)。
+- 当前任务：用已有轨迹诊断自博弈中的多跳证据获取，见 [决策记录](research/DECISION_LOG.md)和[厂内回复 #15](docs/factory/REPLY_20261116_fb15.md)。
 - 看板：`bash scripts/run_board.sh` → http://127.0.0.1:8766/（只读服务：研究说明 + 实时进度）
 - 目标：ICML 2027（主）/ SIGIR 2027（备），12-15 决定。
 

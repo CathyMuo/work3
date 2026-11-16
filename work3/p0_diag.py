@@ -267,9 +267,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--test-parquet")
     ap.add_argument("--compare", action="append", default=[], metavar="NAME=DIR")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--require-comparisons", action="store_true",
+                    help="require iteration 3 and each comparison to cover all multi-hop datasets with gold answers")
     a = ap.parse_args(argv)
     compare = dict(c.split("=", 1) for c in a.compare)
     res = diagnose(Path(a.eval_root), a.test_parquet, {k: Path(v) for k, v in compare.items()})
+    if a.require_comparisons:
+        for run in ("3", *compare):
+            groups = res["per_run"].get(run, {})
+            for dataset in MULTI:
+                group = groups.get(dataset, {})
+                if not group.get("gold_known"):
+                    ap.exit(1, f"[p0_diag] {run}: no usable rows with gold answers for {dataset}\n")
     Path(a.out).write_text(json.dumps(res, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(table(res))
     print(f"\nwritten: {a.out}  (please send this JSON file itself, not a retyped table)")

@@ -7,6 +7,7 @@
 #   all   (unattended: iter1 eval1 iter2 eval2 iter3 eval3 eval0 gate; finished stages are skipped,
 #          a failed stage is retried once from where it stopped -- MAX_ATTEMPTS, ALL_STAGES)
 #   ablate (iteration-3 solver retrained with micro-batch 2 and 1, evaluated; ABL_MICROS="2 1")
+#   ablate-summary (regenerate the CPU report from existing evaluation dumps)
 #
 # Required env:
 #   DRZERO_DIR    Dr. Zero checkout at the pinned commit (data/, corpus/, checkpoints/ live here)
@@ -614,15 +615,34 @@ stage_ablate_one() {  # stage_ablate_one <micro>
     checked "ablate_${tag}_eval" eval "$out" data/test.parquet -- eval_model 3 "$DRZERO_DIR/$base/hf" "$out"
 }
 
-stage_ablate() {
-  local m args=()
+stage_ablate_summary() {
+  local m rc=0
+  local report="$OUT_ROOT/p0_diag_ablate"
+  local logfile="$OUT_ROOT/logs/ablate_summary.log"
+  local args=()
   for m in ${ABL_MICROS:-2 1}; do
-    stage_ablate_one "$m"
     args+=(--compare "micro$m=$OUT_ROOT/eval_ablate/micro$m")
   done
-  python -m work3.p0_diag --eval-root "$OUT_ROOT/eval" --test-parquet data/test.parquet "${args[@]}" \
-    --out "$OUT_ROOT/p0_diag_ablate.json" | tee "$OUT_ROOT/p0_diag_ablate.txt"
-  log "ablation done: $OUT_ROOT/p0_diag_ablate.json"
+  log "start ablate_summary (log: $logfile)"
+  python -u -m work3.p0_diag --eval-root "$OUT_ROOT/eval" --test-parquet data/test.parquet \
+    --require-comparisons "${args[@]}" --out "$report.json.pending" > "$logfile" 2>&1 < /dev/null || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    exit_diag "$rc" >> "$logfile" 2>&1 || true
+    tail -n 40 "$logfile" >&2
+    finish_stage ablate_summary "$rc"
+  fi
+  cp "$logfile" "$report.txt.pending"
+  mv -f "$report.txt.pending" "$report.txt"
+  mv -f "$report.json.pending" "$report.json"
+  log "ablation done: $report.json"
+}
+
+stage_ablate() {
+  local m
+  for m in ${ABL_MICROS:-2 1}; do
+    stage_ablate_one "$m"
+  done
+  stage_ablate_summary
 }
 
 stage_all() {  # unattended: every remaining P0 stage in order; finished stages are skipped
@@ -661,7 +681,7 @@ PY
 }
 
 case "${1:-}" in
-  prepare|patch|iter1|iter2|iter3|eval0|eval1|eval2|eval3|gate|all|ablate) take_lock ;;
+  prepare|patch|iter1|iter2|iter3|eval0|eval1|eval2|eval3|gate|all|ablate|ablate-summary) take_lock ;;
 esac
 
 case "${1:-}" in
@@ -673,6 +693,7 @@ case "${1:-}" in
   gate) stage_gate ;;
   all) stage_all ;;
   ablate) stage_ablate ;;
+  ablate-summary) stage_ablate_summary ;;
   cleanup) stop_orchestrators; cleanup_servers ;;
   probe)   # read-only speed diagnosis of whatever stage is running now (factory feedback #3)
     python -m work3.speed_probe --seconds "${PROBE_SECONDS:-120}" --reward-port "$REWARD_PORT" \

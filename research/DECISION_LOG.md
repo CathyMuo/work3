@@ -847,3 +847,53 @@ Decision: `RECALL_DECOMPOSITION_ORDER_UNCHANGED`.
    decision stands; SIGIR 2027 remains the alternative.
 
 Decision: `P1_NO_GO_STOP_NCP`.
+
+
+## 2026-11-16 (b): Micro-batch ablation NO EVIDENCE; diagnose multi-hop evidence acquisition
+
+Factory feedback #15 supplied the complete JSON regenerated from the two evaluation
+dumps. Archive: [P0 ablation](results/P0_ablation_20261116.json).
+
+| Run | Multi-hop EM (four-dataset macro) | Multi-hop EM (pooled) | Gold-string hit (pooled) | Search calls/question (pooled) |
+| --- | ---: | ---: | ---: | ---: |
+| P0 iter1 | 0.235033 | 0.280549 | 0.469904 | 1.556079 |
+| M1: P0 iter3 | 0.196096 | 0.246391 | 0.404025 | 1.403678 |
+| R1: micro-batch 1 | 0.190959 | 0.243060 | 0.394962 | 1.372141 |
+| R2: micro-batch 2 | 0.194571 | 0.248612 | 0.396695 | 1.212411 |
+
+The preregistered macro EM gap is +0.003612, below
+max(0.015, 2 × 0.005138) = 0.015. Pooled search calls fall by 0.159730
+instead of rising. Both requirements fail. **NO EVIDENCE.** The returned
+table's +0.005552 uses pooled EM. The reported McNemar tests compare each
+retrain with M1 and do not establish equivalence. The gate covers the third
+solver iteration from one shared checkpoint and pool, leaving earlier and
+proposer-side effects unresolved.
+
+Both retrains have around 39.5–39.7% gold-string hits versus 47.0% for
+iteration 1. Search-call count alone cannot describe retrieval behavior.
+The ablation does not identify the effect of stopping, query content, or
+which training data caused the decrease. Check bridge and answer evidence
+on benchmarks with annotated supporting documents.
+
+Decision: **Make evidence acquisition across self-play rounds the lead
+candidate.** Start with paired, offline step-level diagnosis on existing
+traces. If warranted, replay both checkpoints on common states with the
+same retriever, first observation, and query/token budget. Separate the
+decision to continue from the evidence acquired by a query. To test a
+self-play-specific claim, cross early/late checkpoints with early/late
+question pools or use a matched fixed-pool control. Set confirmatory metrics
+and gates before collecting intervention data. Question-pool signal sparsity
+remains a fallback candidate. No new training is scheduled.
+
+[SearchMaster](https://arxiv.org/html/2608.01822) already studies self-play
+depth drift. [Retrieval, Reward, and Training Protocols](https://arxiv.org/html/2605.27881v1)
+already reports query-recall decreases and uses matched search history in
+supervised search RL. A Work3 method needs evidence of a self-play feedback
+mechanism and a repair that improves evidence coverage and EM at matched cost.
+
+Automation: six train/convert/eval stages returned zero, followed by an
+empty text report and absent JSON. The exact report-process failure is
+unknown. The launcher now writes stdout and stderr to a named log and
+offers a CPU-only summary command to recover from existing dumps.
+
+Decision: P0_ABLATION_NO_EVIDENCE_DIAGNOSE_EVIDENCE_ACQUISITION.

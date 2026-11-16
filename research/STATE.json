@@ -2,9 +2,9 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-16",
-  "current_stage": "P0 ablation + re-survey",
-  "status": "P1 NO-GO (frozen gate): eta(k=1) 0.680, eta(k in 3-4) 0.718, diff -0.039 [95% CI -0.123, +0.049]; noise share is high (~0.7) but flat across k, so NCP's weight would be ~constant. NCP direction stopped; P2 cancelled. P0 multi-hop recall collapse remains the open finding; the micro-batch ablation decides whether it is our artifact.",
-  "next_action": "Factory: `run_p0.sh ablate` when GPUs free up; send p0_diag_ablate.json. Home: re-survey for a new direction (inputs: P0 recall collapse, P1 flat noise, ~23% informative pool questions); decide after the ablation.",
+  "current_stage": "Re-scope: multi-hop evidence acquisition diagnosis",
+  "status": "P0 PASS; P1 NO-GO; NCP stopped and P2 cancelled. P0 micro-batch ablation: NO EVIDENCE under the frozen rule. Multi-hop evidence acquisition in self-play is the lead candidate.",
+  "next_action": "Analyze existing P0 dumps by retrieval step and fixed query budget, verify supporting-document coverage, then use matched-prefix replay if needed. Test self-play specificity with crossed question pools and checkpoints before choosing a training intervention. No new training scheduled.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -54,6 +54,32 @@
       },
       "file": "research/results/P1_summary_20261116.json",
       "note": "pool1 1500 q (base solver), pool3 1000 q (solver_iter2); parity 6000/6000; new-search 18.7%"
+    },
+    {
+      "id": "P0_ABLATION",
+      "date": "2026-11-16",
+      "release": "p0-r16",
+      "verdict": "NO EVIDENCE",
+      "multi_hop_macro_em": {
+        "iter3": 0.19609619577051451,
+        "micro1": 0.1909586361386341,
+        "micro2": 0.19457073111483034
+      },
+      "macro_em_difference": 0.003612094976196245,
+      "noise_floor": 0.005137559631880423,
+      "required_difference": 0.015,
+      "multi_hop_calls_per_question": {
+        "micro1": 1.3721405410207437,
+        "micro2": 1.2124106072047263
+      },
+      "multi_hop_gold_string_retrieval": {
+        "1": 0.4699036026831327,
+        "3": 0.40402469903602684,
+        "micro1": 0.3949624627959664,
+        "micro2": 0.39669494913597797
+      },
+      "file": "research/results/P0_ablation_20261116.json",
+      "note": "One retrain per micro-batch; iteration-3 solver only; report regenerated manually from complete eval dumps."
     }
   ],
   "repository": "https://github.com/CathyMuo/work3 (public; renamed from work3_byd on 2026-11-06; method code public)",
