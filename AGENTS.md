@@ -28,6 +28,9 @@ default 127.0.0.1:8766): research briefing from `research/` plus live progress r
 - The user pulls over HTTPS and runs on the 4×H800 factory server, then pastes back
   summaries. Never require the factory to push, hold write credentials, or edit
   `research/DECISION_LOG.md` / `research/STATE.json`.
+- For any next experiment assigned to the factory, publish the runnable entry point and
+  the guide with the selected conditions, expected outputs and return instructions on public
+  main. Verify the remote commit and public guide before handing off the exact command.
 - The factory environment is user-managed. Provide recommended configuration only.
 - Keep paths configurable; models, corpora, indexes, outputs and credentials are
   machine-local and never committed (`configs/local.json` is ignored).

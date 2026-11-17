@@ -64,9 +64,10 @@ class Decision:
     query: str | None = None
     assistant: dict | None = None
     rejection: str | None = None
+    queries: tuple[str, ...] = ()
 
 
-def decide(completion: Completion) -> Decision:
+def decide(completion: Completion, *, max_per_call: int = 1) -> Decision:
     raw = completion.text.strip()
     if completion.finish == "length":
         return Decision("truncated", rejection="completion_limit")
@@ -83,11 +84,12 @@ def decide(completion: Completion) -> Decision:
         queries = arguments.get("query_list")
         if set(arguments) != {"query_list"} or not isinstance(queries, list):
             return Decision("format_error", rejection="invalid_tool_arguments")
-        if len(queries) > 1:
+        if len(queries) > max_per_call:
             return Decision("format_error", rejection="multiple_queries")
-        if len(queries) != 1 or not isinstance(queries[0], str) or QUERY.fullmatch(queries[0]) is None:
+        if not queries or any(not isinstance(q, str) or QUERY.fullmatch(q) is None for q in queries):
             return Decision("format_error", rejection="invalid_query")
-        return Decision("tool", query=queries[0], assistant=message("assistant", content, calls))
+        return Decision("tool", query=queries[0], assistant=message("assistant", content, calls),
+                        queries=tuple(queries))
     answers = ANSWER.findall(raw)
     if (len(answers) == 1 and raw.count("<answer>") == 1 and raw.count("</answer>") == 1
             and raw.endswith("</answer>")):
@@ -97,6 +99,13 @@ def decide(completion: Completion) -> Decision:
 
 def tool_message(world: dict, query: str) -> dict:
     return message("tool", json.dumps({"record": world.get(query)}, sort_keys=True))
+
+
+def tool_batch_message(world: dict, queries: tuple[str, ...]) -> dict:
+    if len(queries) == 1:
+        return tool_message(world, queries[0])
+    results = [{"query": query, "record": world.get(query)} for query in queries]
+    return message("tool", json.dumps({"results": results}, sort_keys=True))
 
 
 def oracle_call(query: str) -> dict:
@@ -132,7 +141,9 @@ def evidence_history(case: Case, world: dict, instruction: str = ORACLE_FINISH) 
 
 async def evaluate(case: Case, generate: Generate, max_queries: int, *,
                    rejections: list[dict] | None = None,
-                   oracle_completions: list[Completion] | None = None) -> dict:
+                   oracle_completions: list[Completion] | None = None,
+                   allow_batch: bool = False, run_oracle: bool = True,
+                   terminals: list[dict] | None = None) -> dict:
     """Evaluate common actions once until the tool result actually differs."""
     initial = initial_history(case)
     costs = {arm: dict(calls=0, prompt_tokens=0, completion_tokens=0, tool_executions=0)
@@ -144,42 +155,54 @@ async def evaluate(case: Case, generate: Generate, max_queries: int, *,
         cost["calls"] += 1
         cost["prompt_tokens"] += response.prompt_tokens
         cost["completion_tokens"] += response.completion_tokens
-        action = decide(response)
+        action = decide(response, max_per_call=max_queries
+                        if arm == "autonomous" and allow_batch else 1)
         if arm == "oracle" and oracle_completions is not None:
             oracle_completions.append(response)
         if arm == "autonomous" and rejections is not None and action.rejection:
             rejections.append({
                 "worlds": worlds, "reason": action.rejection, "status": action.status,
                 "completion": asdict(response), "history": history,
-                "executed_queries": sum(msg["role"] == "tool" for msg in history),
+                "executed_queries": sum(len(call["function"]["arguments"]["query_list"])
+                                        for msg in history for call in msg["tool_calls"] or []),
             })
         return action
 
-    def lookup(world: dict, query: str, arm: str) -> dict:
-        costs[arm]["tool_executions"] += 1
-        return tool_message(world, query)
+    def lookup(world: dict, queries: tuple[str, ...]) -> dict:
+        costs["autonomous"]["tool_executions"] += len(queries)
+        return tool_batch_message(world, queries)
+
+    def stopped(action: Decision, queries: tuple[str, ...]) -> bool:
+        return action.status != "tool" or len(queries) + len(action.queries) > max_queries
+
+    def end(action: Decision, history: list[dict], queries: tuple[str, ...],
+            worlds: tuple[int, ...]) -> Branch:
+        branch = finish(action, queries)
+        if terminals is not None:
+            terminals.append({"worlds": worlds, "history": history, **asdict(branch)})
+        return branch
 
     async def continue_branch(history: list[dict], queries: tuple[str, ...],
                               world_index: int) -> Branch:
         world = case.worlds[world_index]
         while True:
             action = await next_action(history, "autonomous", (world_index,))
-            if action.status != "tool" or len(queries) == max_queries:
-                return finish(action, queries)
-            history = history + [action.assistant, lookup(world, action.query, "autonomous")]
-            queries += (action.query,)
+            if stopped(action, queries):
+                return end(action, history, queries, (world_index,))
+            history = history + [action.assistant, lookup(world, action.queries)]
+            queries += action.queries
 
     history = initial
     queries = ()
     fork_at = None
     while True:
         action = await next_action(history, "autonomous", (0, 1))
-        if action.status != "tool" or len(queries) == max_queries:
-            branches = (finish(action, queries),) * 2
+        if stopped(action, queries):
+            branches = (end(action, history, queries, (0, 1)),) * 2
             break
-        histories = [history + [action.assistant, lookup(world, action.query, "autonomous")]
+        histories = [history + [action.assistant, lookup(world, action.queries)]
                      for world in case.worlds]
-        queries += (action.query,)
+        queries += action.queries
         if histories[0][-1] != histories[1][-1]:
             fork_at = len(queries)
             branches = tuple([await continue_branch(prefix, queries, index)
@@ -188,7 +211,7 @@ async def evaluate(case: Case, generate: Generate, max_queries: int, *,
         history = histories[0]
 
     oracle = []
-    if not case.control:
+    if not case.control and run_oracle:
         for index, world in enumerate(case.worlds):
             history = evidence_history(case, world)
             costs["oracle"]["tool_executions"] += len(case.oracle)
@@ -221,6 +244,8 @@ async def evaluate(case: Case, generate: Generate, max_queries: int, *,
     elif any(branch.status == "budget_exhausted" and had_evidence
              for branch, had_evidence in zip(branches, sufficient)):
         diagnosis = "budget_exhausted_after_observation"
+    elif not run_oracle:
+        diagnosis = "evidence_intervention_pending"
     elif any(branch.status != "answered" for branch in oracle):
         diagnosis = "oracle_format_or_truncation"
     elif not all(oracle_correct):
