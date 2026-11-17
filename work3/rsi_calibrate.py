@@ -60,8 +60,8 @@ def oracle_prompt(case: Case, world: dict, condition: str) -> list[dict]:
     return initial_history(case) + [message("user", "\n\n".join(evidence + [instruction]))]
 
 
-def score_output(response: Completion, label: str) -> dict:
-    action = decide(response)
+def score_output(response: Completion, label: str, *, allow_answer_period: bool = False) -> dict:
+    action = decide(response, allow_answer_period=allow_answer_period)
     return {
         "answer": action.answer,
         "correct": action.answer == label,

@@ -2,9 +2,9 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-17",
-  "current_stage": "P0 offline evidence acquisition diagnosis",
-  "status": "P0 PASS; P1 NO-GO; NCP stopped and P2 cancelled. The factory verified the ablation report recovery and the NO EVIDENCE verdict. The next diagnostic is registered and ready; no diagnostic results received yet.",
-  "next_action": "Factory runs bash scripts/p0/run_retrieval_diag.sh on the original P0 dumps using CPU only and returns retrieval_diag_return.json. Home interprets the result and decides whether to implement matched-prefix replay.",
+  "current_stage": "RSI evidence acquisition and use mechanism replication",
+  "status": "P0 PASS, P1 NO-GO and P2 cancelled. The prior retrieval diagnostic is closed. Tool-compare oracle passed its original engineering gate. Batch lookup is now the default for the next RSI mechanism pilot. Keep both acquisition and use hypotheses open.",
+  "next_action": "Factory runs bash scripts/run_rsi_followup.sh terminal on the same frozen Qwen2.5-7B and returns rsi_terminal_summary.json plus rsi_terminal_cases.jsonl. Home analyzes the three-arm evidence rescue and controlled subtotal replay before deciding on training.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -107,5 +107,7 @@
   },
   "p0_release": "p0-r16",
   "p1_release": "p1-r16",
-  "p2_release": "p2-r16"
+  "p2_release": "p2-r16",
+  "rsi_current_protocol": "research/protocols/RSI_terminal_probe.md",
+  "rsi_factory_guide": "docs/factory/RSI_terminal_probe_guide.md"
 }

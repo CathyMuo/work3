@@ -67,7 +67,8 @@ class Decision:
     queries: tuple[str, ...] = ()
 
 
-def decide(completion: Completion, *, max_per_call: int = 1) -> Decision:
+def decide(completion: Completion, *, max_per_call: int = 1,
+           allow_answer_period: bool = False) -> Decision:
     raw = completion.text.strip()
     if completion.finish == "length":
         return Decision("truncated", rejection="completion_limit")
@@ -90,6 +91,8 @@ def decide(completion: Completion, *, max_per_call: int = 1) -> Decision:
             return Decision("format_error", rejection="invalid_query")
         return Decision("tool", query=queries[0], assistant=message("assistant", content, calls),
                         queries=tuple(queries))
+    if allow_answer_period and re.search(r"</answer>\s*\.$", raw):
+        raw = raw[:-1].rstrip()
     answers = ANSWER.findall(raw)
     if (len(answers) == 1 and raw.count("<answer>") == 1 and raw.count("</answer>") == 1
             and raw.endswith("</answer>")):
@@ -143,7 +146,8 @@ async def evaluate(case: Case, generate: Generate, max_queries: int, *,
                    rejections: list[dict] | None = None,
                    oracle_completions: list[Completion] | None = None,
                    allow_batch: bool = False, run_oracle: bool = True,
-                   terminals: list[dict] | None = None) -> dict:
+                   terminals: list[dict] | None = None,
+                   allow_answer_period: bool = False) -> dict:
     """Evaluate common actions once until the tool result actually differs."""
     initial = initial_history(case)
     costs = {arm: dict(calls=0, prompt_tokens=0, completion_tokens=0, tool_executions=0)
@@ -155,8 +159,8 @@ async def evaluate(case: Case, generate: Generate, max_queries: int, *,
         cost["calls"] += 1
         cost["prompt_tokens"] += response.prompt_tokens
         cost["completion_tokens"] += response.completion_tokens
-        action = decide(response, max_per_call=max_queries
-                        if arm == "autonomous" and allow_batch else 1)
+        action = decide(response, max_per_call=max_queries if arm == "autonomous" and allow_batch else 1,
+                        allow_answer_period=allow_answer_period)
         if arm == "oracle" and oracle_completions is not None:
             oracle_completions.append(response)
         if arm == "autonomous" and rejections is not None and action.rejection:

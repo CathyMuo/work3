@@ -20,9 +20,9 @@ FRESH_CONTROLS = 8
 FAMILIES = ("amended", "pool")
 
 
-def linked_case(family: str, index: int, *, placebo: bool = False) -> Case:
+def linked_case(family: str, index: int, *, placebo: bool = False, seed: int = SEED) -> Case:
     """Create a new synthetic case or independent, format-matched placebo records."""
-    rng = random.Random(f"{SEED}:{family}:{index}:{placebo}")
+    rng = random.Random(f"{seed}:{family}:{index}:{placebo}")
     ids = rng.sample(range(500000 if placebo else 100000,
                            900000 if placebo else 500000), 5)
     root, active, old = (f"ORD-{serial}" for serial in ids[:3])

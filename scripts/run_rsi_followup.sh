@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: MODEL_DIR=/path/to/Qwen2.5-7B-Instruct %s {confirmation|batch|evidence}\n' "$0"
+  printf 'Usage: MODEL_DIR=/path/to/Qwen2.5-7B-Instruct %s {confirmation|batch|evidence|terminal}\n' "$0"
 }
 if [[ $# -ne 1 ]]; then usage >&2; exit 2; fi
 if [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
@@ -10,6 +10,7 @@ phase=$1
 case "$phase" in
   confirmation) module=work3.rsi_calibrate; phase_args=(--phase confirmation --condition tool_compare) ;;
   batch|evidence) module=work3.rsi_failure_probe; phase_args=(--phase "$phase") ;;
+  terminal) module=work3.rsi_terminal_probe; phase_args=() ;;
   *) usage >&2; exit 2 ;;
 esac
 
