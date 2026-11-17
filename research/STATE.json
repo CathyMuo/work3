@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "project": "work3",
-  "updated_at": "2026-11-16",
-  "current_stage": "Re-scope: multi-hop evidence acquisition diagnosis",
-  "status": "P0 PASS; P1 NO-GO; NCP stopped and P2 cancelled. P0 micro-batch ablation: NO EVIDENCE under the frozen rule. Multi-hop evidence acquisition in self-play is the lead candidate.",
-  "next_action": "Analyze existing P0 dumps by retrieval step and fixed query budget, verify supporting-document coverage, then use matched-prefix replay if needed. Test self-play specificity with crossed question pools and checkpoints before choosing a training intervention. No new training scheduled.",
+  "updated_at": "2026-11-17",
+  "current_stage": "P0 offline evidence acquisition diagnosis",
+  "status": "P0 PASS; P1 NO-GO; NCP stopped and P2 cancelled. The factory verified the ablation report recovery and the NO EVIDENCE verdict. The next diagnostic is registered and ready; no diagnostic results received yet.",
+  "next_action": "Factory runs bash scripts/p0/run_retrieval_diag.sh on the original P0 dumps using CPU only and returns retrieval_diag_return.json. Home interprets the result and decides whether to implement matched-prefix replay.",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -96,6 +96,10 @@
       "file": "research/protocols/P2_ncp_pilot.md",
       "rule": "A3(NCP)-A3(DrZero) >= 0.020 and A3(NCP)-A3(Beta) >= 0.010 and A3(NCP) >= A2(NCP); needs P0 PASS and P1 GO",
       "status": "cancelled 2026-11-16 (P1 NO-GO)"
+    },
+    "P0_RETRIEVAL_DIAG": {
+      "file": "research/protocols/P0_retrieval_diagnosis.md",
+      "sha256": "13be447d4afcd7ce355ba3d63a539025d88e04758e9a0b9efcc26a77dfc9a80d"
     }
   },
   "upstreams": {

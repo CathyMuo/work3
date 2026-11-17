@@ -897,3 +897,28 @@ unknown. The launcher now writes stdout and stderr to a named log and
 offers a CPU-only summary command to recover from existing dumps.
 
 Decision: P0_ABLATION_NO_EVIDENCE_DIAGNOSE_EVIDENCE_ACQUISITION.
+
+
+## 2026-11-17: Register the offline retrieval diagnosis after factory feedback #16
+
+The factory reproduced the ablation summary from saved dumps without using GPUs.
+The registered ablation verdict is NO EVIDENCE. The seven-dataset 0.310700
+reported today is the deduplicated diagnostic EM; the formal full evaluation
+remains 0.3071. Archived 2->micro2 paired multi-hop counts are 1,874 losses and
+1,661 gains, McNemar p=0.000362; the hand-transcribed line differs. The independent
+micro1 retrain also drops from iteration 2. Neither test identifies the effect
+of earlier training rounds or establishes equivalence of the micro-batches.
+
+Run the new CPU-only retrieval diagnostic on the saved P0 trajectories. The
+primary endpoint is paired change in coverage of all annotated support titles
+at query budget 2, macro-averaged over HotpotQA and 2Wiki. Fixed budgets cut
+observed prefixes; neither forced continuation nor a new training run is
+involved. The protocol records coverage quality, exact sentence corroboration,
+and cautious bridge/answer roles. The first-query miss cohort may prioritize
+which replay to build; it is descriptive until controlled.
+
+The factory retains full results and sends the compact summary. Home owns any
+follow-up script and launch decision. [Factory guide](../docs/factory/REPLY_20261117_fb16.md)
+and [frozen protocol](protocols/P0_retrieval_diagnosis.md).
+
+Protocol SHA-256: 13be447d4afcd7ce355ba3d63a539025d88e04758e9a0b9efcc26a77dfc9a80d
