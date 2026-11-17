@@ -31,10 +31,16 @@ TOOLS = [{
         },
     },
 }]
-SYSTEM = """You are an inventory dispatch assistant. Use search for any needed order and stock facts.
-Send one exact query per tool call. Use order ORD-123456 to get order items and quantities.
-Use stock SKU-123456 to get stock levels. IDs in these examples are placeholders.
-When giving your final answer, write <answer>A</answer> or <answer>B</answer>."""
+SYSTEM = """You are an inventory dispatch assistant. Look up one record at a time.
+For an order ID, query "order " followed by its ID. For an item, query "stock " followed by its SKU.
+Use IDs from the question and returned records. Once the available facts determine the route,
+stop querying. End your response with exactly one of the following: a tool call, <answer>A</answer>,
+or <answer>B</answer>. A tool call has this form, substituting the current lookup ID:
+<tool_call>
+{"name":"search","arguments":{"query_list":["stock SKU-000000"]}}
+</tool_call>"""
+ORACLE_FINISH = ("The lookup phase is complete. Use the records above to decide the route. "
+                 "Reply with <answer>A</answer> or <answer>B</answer> and make no further calls.")
 ANSWER = re.compile(r"<answer>\s*([AB])\s*</answer>")
 QUERY = re.compile(r"(?:order ORD|stock SKU)-[0-9]{6}")
 CALL = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
@@ -160,6 +166,7 @@ async def evaluate(case: Case, generate: Generate, max_queries: int) -> dict:
             history = initial.copy()
             for query in case.oracle:
                 history.extend([oracle_call(query), lookup(world, query, "oracle")])
+            history.append(message("user", ORACLE_FINISH))
             action = await next_action(history, "oracle")
             status = "unexpected_tool" if action.status == "tool" else action.status
             oracle.append(Branch(status, action.answer, case.oracle))
@@ -253,7 +260,7 @@ async def run(args: argparse.Namespace) -> dict:
     root = Path(__file__).resolve().parent.parent
     git = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True,
                          capture_output=True, check=False)
-    provenance = {"revision": git.stdout.strip() or None, "protocol": 1, **vars(args)}
+    provenance = {"revision": git.stdout.strip() or None, "protocol": 2, **vars(args)}
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, local_files_only=True)
     renderer = Renderer(tokenizer, TOOLS)
     limiter = asyncio.Semaphore(args.concurrency)

@@ -1,7 +1,8 @@
 import json
 import unittest
 
-from work3.rsi_probe import Completion, decide, evaluate, metrics, oracle_call, tool_message
+from work3.rsi_probe import (ORACLE_FINISH, Completion, decide, evaluate, metrics,
+                             oracle_call, tool_message)
 from work3.rsi_tasks import FAMILIES, SPLITS, make_case, make_cases
 
 
@@ -72,6 +73,9 @@ class ProbeTest(unittest.IsolatedAsyncioTestCase):
 
         async def generate(history):
             seen.append(history)
+            if history[-1]["content"] == ORACLE_FINISH:
+                self.assertEqual(history[-1]["role"], "user")
+                history = history[:-1]
             depth = (len(history) - 2) // 2
             if depth < len(case.oracle):
                 return call(case.oracle[depth])
@@ -88,6 +92,7 @@ class ProbeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["costs"]["autonomous"]["calls"], 6)
         self.assertEqual(row["costs"]["autonomous"]["tool_executions"], 6)
         self.assertEqual(len(seen), 8)
+        self.assertEqual(sum(h[-1]["content"] == ORACLE_FINISH for h in seen), 2)
         self.assertEqual(row["oracle_correct"], [True, True])
 
     async def test_early_guesses_vs_observation_errors(self):
@@ -96,7 +101,7 @@ class ProbeTest(unittest.IsolatedAsyncioTestCase):
         async def oracle_recovers(history):
             if len(history) == 2:
                 return answer("A")
-            i = int(history[-1] == tool_message(case.worlds[1], case.changed_query))
+            i = int(history[-2] == tool_message(case.worlds[1], case.changed_query))
             return answer(case.answers[i])
 
         async def cannot_use(history):
