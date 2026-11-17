@@ -35,7 +35,9 @@ python -m work3.rsi_probe \
   --seed 20261117 --out-dir "$PWD/results/rsi-paired-smoke-$(date +%Y%m%d-%H%M%S)"
 ~~~
 
-试跑打印 6/6 并生成两个文件后，若收到正式运行通知，按下列命令运行 120 个目标对和 30 个对照对。保留同一模型、种子和预算。
+试跑打印 6/6 并生成两个文件后，打开 `paired_rsi_summary.json` 检查模型名是 `rsi-qwen25-7b`，且 `overall.oracle.worlds_with_answer` 为 8、`overall.autonomous.worlds_with_answer` 大于 0。查看自主条件和对照的 `statuses`，并确认逐对文件记录了查询与分叉状态。通过标准检查的是结果可判读，试跑答错的样本仍应原样保留。
+
+若输出未达到上述条件，回传两个试跑结果及启动命令，由研发复核工具格式和推理服务。试跑通过且收到正式运行通知后，按下列命令运行 120 个目标对和 30 个对照对。保留同一模型、种子和预算。
 
 ~~~bash
 python -m work3.rsi_probe \
