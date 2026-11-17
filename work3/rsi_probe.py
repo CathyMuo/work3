@@ -63,33 +63,36 @@ class Decision:
     answer: str | None = None
     query: str | None = None
     assistant: dict | None = None
+    rejection: str | None = None
 
 
 def decide(completion: Completion) -> Decision:
     raw = completion.text.strip()
     if completion.finish == "length":
-        return Decision("truncated")
+        return Decision("truncated", rejection="completion_limit")
     if "<tool_call" in raw or "</tool_call>" in raw:
         matches = CALL.findall(raw)
         if (len(matches) != 1 or raw.count("<tool_call>") != 1
                 or raw.count("</tool_call>") != 1 or not raw.endswith("</tool_call>")
                 or "<answer" in raw):
-            return Decision("format_error")
+            return Decision("format_error", rejection="malformed_tool_envelope")
         content, calls, error = parse_tool_calls(raw)
         if error or len(calls) != 1:
-            return Decision("format_error")
+            return Decision("format_error", rejection="invalid_or_multiple_tool_calls")
         arguments = calls[0]["function"]["arguments"]
         queries = arguments.get("query_list")
-        if (set(arguments) != {"query_list"} or not isinstance(queries, list)
-                or len(queries) != 1 or not isinstance(queries[0], str)
-                or QUERY.fullmatch(queries[0]) is None):
-            return Decision("format_error")
+        if set(arguments) != {"query_list"} or not isinstance(queries, list):
+            return Decision("format_error", rejection="invalid_tool_arguments")
+        if len(queries) > 1:
+            return Decision("format_error", rejection="multiple_queries")
+        if len(queries) != 1 or not isinstance(queries[0], str) or QUERY.fullmatch(queries[0]) is None:
+            return Decision("format_error", rejection="invalid_query")
         return Decision("tool", query=queries[0], assistant=message("assistant", content, calls))
     answers = ANSWER.findall(raw)
     if (len(answers) == 1 and raw.count("<answer>") == 1 and raw.count("</answer>") == 1
             and raw.endswith("</answer>")):
         return Decision("answered", answer=answers[0])
-    return Decision("format_error")
+    return Decision("format_error", rejection="missing_or_malformed_answer")
 
 
 def tool_message(world: dict, query: str) -> dict:
@@ -115,28 +118,52 @@ def finish(decision: Decision, queries: tuple[str, ...]) -> Branch:
     return Branch(status, decision.answer, queries)
 
 
-async def evaluate(case: Case, generate: Generate, max_queries: int) -> dict:
+def initial_history(case: Case) -> list[dict]:
+    return [message("system", SYSTEM), message("user", case.prompt)]
+
+
+def evidence_history(case: Case, world: dict, instruction: str = ORACLE_FINISH) -> list[dict]:
+    history = initial_history(case)
+    for query in case.oracle:
+        history.extend([oracle_call(query), tool_message(world, query)])
+    history.append(message("user", instruction))
+    return history
+
+
+async def evaluate(case: Case, generate: Generate, max_queries: int, *,
+                   rejections: list[dict] | None = None,
+                   oracle_completions: list[Completion] | None = None) -> dict:
     """Evaluate common actions once until the tool result actually differs."""
-    initial = [message("system", SYSTEM), message("user", case.prompt)]
+    initial = initial_history(case)
     costs = {arm: dict(calls=0, prompt_tokens=0, completion_tokens=0, tool_executions=0)
              for arm in ("autonomous", "oracle")}
 
-    async def next_action(history: list[dict], arm: str) -> Decision:
+    async def next_action(history: list[dict], arm: str, worlds: tuple[int, ...]) -> Decision:
         response = await generate(history)
         cost = costs[arm]
         cost["calls"] += 1
         cost["prompt_tokens"] += response.prompt_tokens
         cost["completion_tokens"] += response.completion_tokens
-        return decide(response)
+        action = decide(response)
+        if arm == "oracle" and oracle_completions is not None:
+            oracle_completions.append(response)
+        if arm == "autonomous" and rejections is not None and action.rejection:
+            rejections.append({
+                "worlds": worlds, "reason": action.rejection, "status": action.status,
+                "completion": asdict(response), "history": history,
+                "executed_queries": sum(msg["role"] == "tool" for msg in history),
+            })
+        return action
 
     def lookup(world: dict, query: str, arm: str) -> dict:
         costs[arm]["tool_executions"] += 1
         return tool_message(world, query)
 
     async def continue_branch(history: list[dict], queries: tuple[str, ...],
-                              world: dict) -> Branch:
+                              world_index: int) -> Branch:
+        world = case.worlds[world_index]
         while True:
-            action = await next_action(history, "autonomous")
+            action = await next_action(history, "autonomous", (world_index,))
             if action.status != "tool" or len(queries) == max_queries:
                 return finish(action, queries)
             history = history + [action.assistant, lookup(world, action.query, "autonomous")]
@@ -146,7 +173,7 @@ async def evaluate(case: Case, generate: Generate, max_queries: int) -> dict:
     queries = ()
     fork_at = None
     while True:
-        action = await next_action(history, "autonomous")
+        action = await next_action(history, "autonomous", (0, 1))
         if action.status != "tool" or len(queries) == max_queries:
             branches = (finish(action, queries),) * 2
             break
@@ -155,19 +182,17 @@ async def evaluate(case: Case, generate: Generate, max_queries: int) -> dict:
         queries += (action.query,)
         if histories[0][-1] != histories[1][-1]:
             fork_at = len(queries)
-            branches = tuple([await continue_branch(prefix, queries, world)
-                              for prefix, world in zip(histories, case.worlds)])
+            branches = tuple([await continue_branch(prefix, queries, index)
+                              for index, prefix in enumerate(histories)])
             break
         history = histories[0]
 
     oracle = []
     if not case.control:
-        for world in case.worlds:
-            history = initial.copy()
-            for query in case.oracle:
-                history.extend([oracle_call(query), lookup(world, query, "oracle")])
-            history.append(message("user", ORACLE_FINISH))
-            action = await next_action(history, "oracle")
+        for index, world in enumerate(case.worlds):
+            history = evidence_history(case, world)
+            costs["oracle"]["tool_executions"] += len(case.oracle)
+            action = await next_action(history, "oracle", (index,))
             status = "unexpected_tool" if action.status == "tool" else action.status
             oracle.append(Branch(status, action.answer, case.oracle))
 
@@ -252,6 +277,22 @@ def counts(values) -> dict:
     return dict(sorted(result.items()))
 
 
+async def request_completion(client, renderer: Renderer, endpoint: str, model: str,
+                             max_tokens: int, history: list[dict]) -> Completion:
+    response = await client.post(endpoint.rstrip("/") + "/v1/completions", json={
+        "model": model, "prompt": renderer.render(history, gen=True),
+        "temperature": 0, "max_tokens": max_tokens,
+    })
+    if response.is_error:
+        raise RuntimeError(f"Completion endpoint returned {response.status_code}: "
+                           f"{response.text[:500]}")
+    body = response.json()
+    choice = body["choices"][0]
+    usage = body.get("usage") or {}
+    return Completion(choice["text"], choice.get("finish_reason") or "unknown",
+                      usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+
+
 async def run(args: argparse.Namespace) -> dict:
     import httpx
     from transformers import AutoTokenizer
@@ -266,21 +307,9 @@ async def run(args: argparse.Namespace) -> dict:
     limiter = asyncio.Semaphore(args.concurrency)
     async with httpx.AsyncClient(trust_env=False, timeout=120) as client:
         async def generate(history: list[dict]) -> Completion:
-            request = {
-                "model": args.model, "prompt": renderer.render(history, gen=True),
-                "temperature": 0, "max_tokens": args.max_tokens,
-            }
             async with limiter:
-                response = await client.post(args.endpoint.rstrip("/") + "/v1/completions",
-                                             json=request)
-            if response.is_error:
-                raise RuntimeError(f"Completion endpoint returned {response.status_code}: "
-                                   f"{response.text[:500]}")
-            body = response.json()
-            choice = body["choices"][0]
-            usage = body.get("usage") or {}
-            return Completion(choice["text"], choice.get("finish_reason") or "unknown",
-                              usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+                return await request_completion(client, renderer, args.endpoint, args.model,
+                                                args.max_tokens, history)
 
         rows = []
         for start in range(0, len(cases), args.concurrency):
