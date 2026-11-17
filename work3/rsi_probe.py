@@ -68,10 +68,12 @@ class Decision:
 
 
 def decide(completion: Completion, *, max_per_call: int = 1,
-           allow_answer_period: bool = False) -> Decision:
+           allow_answer_period: bool = False, allow_bare_answer: bool = False) -> Decision:
     raw = completion.text.strip()
     if completion.finish == "length":
         return Decision("truncated", rejection="completion_limit")
+    if allow_bare_answer and raw in ("A", "B"):
+        return Decision("answered", answer=raw)
     if "<tool_call" in raw or "</tool_call>" in raw:
         matches = CALL.findall(raw)
         if (len(matches) != 1 or raw.count("<tool_call>") != 1
@@ -147,11 +149,21 @@ async def evaluate(case: Case, generate: Generate, max_queries: int, *,
                    oracle_completions: list[Completion] | None = None,
                    allow_batch: bool = False, run_oracle: bool = True,
                    terminals: list[dict] | None = None,
-                   allow_answer_period: bool = False) -> dict:
+                   allow_answer_period: bool = False, allow_bare_answer: bool = False,
+                   seed_queries: tuple[str, ...] = (), extra_system_instruction: str = "") -> dict:
     """Evaluate common actions once until the tool result actually differs."""
     initial = initial_history(case)
+    if extra_system_instruction:
+        initial[0] = message("system", SYSTEM + "\n" + extra_system_instruction)
+    if len(seed_queries) > max_queries:
+        raise ValueError("Preset lookups exceed the query budget")
+    for query in seed_queries:
+        if query not in case.worlds[0] or case.worlds[0].get(query) != case.worlds[1].get(query):
+            raise ValueError("Preset lookups must exist with identical records in both worlds")
+        initial.extend([oracle_call(query), tool_message(case.worlds[0], query)])
     costs = {arm: dict(calls=0, prompt_tokens=0, completion_tokens=0, tool_executions=0)
              for arm in ("autonomous", "oracle")}
+    costs["autonomous"]["tool_executions"] = len(seed_queries) * len(case.worlds)
 
     async def next_action(history: list[dict], arm: str, worlds: tuple[int, ...]) -> Decision:
         response = await generate(history)
@@ -160,7 +172,7 @@ async def evaluate(case: Case, generate: Generate, max_queries: int, *,
         cost["prompt_tokens"] += response.prompt_tokens
         cost["completion_tokens"] += response.completion_tokens
         action = decide(response, max_per_call=max_queries if arm == "autonomous" and allow_batch else 1,
-                        allow_answer_period=allow_answer_period)
+                        allow_answer_period=allow_answer_period, allow_bare_answer=allow_bare_answer)
         if arm == "oracle" and oracle_completions is not None:
             oracle_completions.append(response)
         if arm == "autonomous" and rejections is not None and action.rejection:
@@ -197,7 +209,7 @@ async def evaluate(case: Case, generate: Generate, max_queries: int, *,
             queries += action.queries
 
     history = initial
-    queries = ()
+    queries = seed_queries
     fork_at = None
     while True:
         action = await next_action(history, "autonomous", (0, 1))
