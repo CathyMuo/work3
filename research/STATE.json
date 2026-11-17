@@ -2,9 +2,9 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-17",
-  "current_stage": "RSI actionable evidence-acquisition replication",
-  "status": "P0 PASS, P1 NO-GO and P2 cancelled. The earlier retrieval diagnosis is closed. Use batch lookup for the current RSI pilots. Relevant records rescued the acquisition failure in the original order-link structure. Evidence-present routing errors were observed autonomously but rarely persisted under structured finalization. Focus learning preparation on acquisition.",
-  "next_action": "Factory runs bash scripts/run_rsi_followup.sh pointer on the same frozen Qwen2.5-7B and returns rsi_pointer_summary.json and rsi_pointer_cases.jsonl. Home checks cross-structure selective retrieval rescue against a grounding prompt before scheduling an acquisition-only pilot.",
+  "current_stage": "W0 · Wikipedia 输入审计",
+  "status": "沿用 Dr. Zero 的 Wikipedia 离线索引。用 HotpotQA 和 2WikiMultiHopQA 的原题、支持句和保存的搜索轨迹建立候选集。库存合成试验归入历史诊断。当前等待厂内 CPU 审计。",
+  "next_action": "在原 P0 环境运行 bash scripts/run_wiki_rsi_audit.sh，回传 wiki_rsi_input_summary.json，厂内保留候选清单。之后核验历史重建与实际取证干预。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -108,6 +108,6 @@
   "p0_release": "p0-r16",
   "p1_release": "p1-r16",
   "p2_release": "p2-r16",
-  "rsi_current_protocol": "research/protocols/RSI_pointer_probe.md",
-  "rsi_factory_guide": "docs/factory/RSI_pointer_probe_guide.md"
+  "rsi_current_protocol": "research/protocols/RSI_wikipedia.md",
+  "rsi_factory_guide": "docs/factory/RSI_wikipedia_guide.md"
 }

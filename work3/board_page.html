@@ -145,12 +145,12 @@ details { border-top:1px solid var(--line); padding:8px 0 2px; margin-top:10px; 
 </head>
 <body>
 <header>
-  <h1>Work 3 · 零数据自博弈搜索智能体</h1>
-  <nav><button id="t-live" class="on">实验进度</button> <button id="t-cur">训练曲线</button> <button id="t-brief">研究说明</button> <button id="t-res">项目记录</button></nav>
+  <h1>Work 3 · Wikipedia 搜索智能体</h1>
+  <nav><button id="t-live">历史运行</button> <button id="t-cur">训练曲线</button> <button id="t-brief" class="on">研究说明</button> <button id="t-res">项目记录</button></nav>
   <span class="mute" id="upd"></span>
 </header>
 <main>
-  <section id="live"></section>
+  <section id="live" hidden></section>
   <section id="cur" hidden>
     <div class="card">
       <div class="ctl">
@@ -168,7 +168,7 @@ details { border-top:1px solid var(--line); padding:8px 0 2px; margin-top:10px; 
     <div class="card" id="c-reward" hidden><h2>P2 出题奖励日志（每步一次）</h2><div class="charts" id="c-reward-charts"></div></div>
     <div class="card"><h2>GPU 与检索服务历史（看板启动后每 10 秒采样，保留 6 小时）</h2><div class="charts" id="c-hist"></div></div>
   </section>
-  <section id="brief" hidden><article class="brief" id="brief-body">加载中…</article></section>
+  <section id="brief"><article class="brief" id="brief-body">加载中…</article></section>
   <section id="res" hidden></section>
 </main>
 <script>
@@ -352,8 +352,18 @@ async function tick() {
 }
 
 async function loadBriefing() {
-  const html = await (await fetch("/api/briefing")).text();
-  $("#brief-body").innerHTML = html;
+  try {
+    const response = await fetch("/api/research", {cache: "no-store"});
+    if (!response.ok) throw new Error("研究数据返回 " + response.status);
+    const result = await response.json();
+    $("#brief-body").innerHTML =
+      "<div class=\"hero\"><h1>固定 Wikipedia 索引上的证据取证</h1>" +
+      "<p>先验明缺失证据是否能救回答案，再检验原搜索工具能否在预算内找到它。</p>" +
+      "<p><strong>当前阶段</strong> " + esc(result.state.current_stage) + "</p></div>" +
+      "<div class=\"card\">" + result.plan_html + "</div>";
+  } catch (error) {
+    $("#brief-body").textContent = "研究说明读取失败：" + error.message;
+  }
 }
 
 async function loadResearch() {
@@ -589,7 +599,8 @@ function show(which) {
 }
 for (const w of ["live", "cur", "brief", "res"]) $("#t-" + w).onclick = () => show(w);
 tick(); setInterval(tick, 8000);
-if (["cur", "brief", "res"].includes(location.hash.slice(1))) show(location.hash.slice(1));
+const tab = location.hash.slice(1);
+show(["live", "cur", "brief", "res"].includes(tab) ? tab : "brief");
 setInterval(() => { if (!$("#cur").hidden) { curLoad(); loadHistory(); } }, 15000);
 </script>
 </body>

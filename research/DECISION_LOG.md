@@ -922,3 +922,10 @@ follow-up script and launch decision. [Factory guide](../docs/factory/REPLY_2026
 and [frozen protocol](protocols/P0_retrieval_diagnosis.md).
 
 Protocol SHA-256: 13be447d4afcd7ce355ba3d63a539025d88e04758e9a0b9efcc26a77dfc9a80d
+
+
+## 2026-11-17 恢复固定 Wikipedia 索引主线
+
+库存合成试验归入历史协议诊断。停止安排订单引用试验。主问题是能否用真实检索可修复的失败，改进下一轮自博弈任务分配及求解。先查同历史补证据的作用，再验证原索引的受预算查询是否可达，最后在独立训练与评测页面上比较同预算的真反馈和打乱反馈。
+
+厂内首轮只执行 W0 CPU 输入审计。原跨轮 P0 取证比较的 INVALID_INPUT 判定保留。此轮重新建立单轮真实轨迹候选框，不从可解析子集推断 P0 退化。脚本、冻结输入和回传格式见 Wikipedia RSI 厂内指南。

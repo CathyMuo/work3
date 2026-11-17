@@ -1,5 +1,7 @@
 # RSI 订单引用定位厂内指南
 
+**历史合成诊断，已停止厂内执行。** 当前工作三使用原 Wikipedia 离线索引，厂内执行入口见 [Wikipedia RSI 指南](RSI_wikipedia_guide.md)。
+
 本轮用冻结模型验证，纠正一条订单查询能否恢复后续取证，以及低成本的 ID 约束是否已经足够。使用上轮同一 Qwen2.5-7B-Instruct、tokenizer、Python 环境和 vLLM 0.8.5.post1。若服务已停止，按[校准运行指南](RSI_oracle_calibration_guide.md)第 1 节恢复相同模型和端口。保活和推理的切换仍按厂内安排。
 
 在工作三仓库根目录执行，将 MODEL_DIR 设为上轮使用的模型目录。
