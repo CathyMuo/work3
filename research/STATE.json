@@ -2,9 +2,9 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-18",
-  "current_stage": "W0c · 跨轮真实检索缓存审计",
-  "status": "W0b 修复了 HotpotQA 的支持句输入，真实同轮来源候选为 43/60，2Wiki 的 393 道完整复现。W0b 未过门槛，W1 尚未运行。",
-  "next_action": "固定第 3 轮状态，扩展第 0–2 轮真实缓存来源。两个数据集均达到 60 道时执行 CPU 历史重建，回传审计和准备汇总。",
+  "current_stage": "W1 · 单卡同历史证据回放",
+  "status": "厂内 W0c 和 CPU 历史重建均通过。56 道 HotpotQA、59 道 2Wiki 缺证据配对题以及 59 道证据齐全对照题已冻结。真实 GPU 回放待运行。",
+  "next_action": "复用原准备文件与 P0 第 3 轮 3B 检查点，先做启动检查与单卡四题冒烟，再完整回放 174 道题、578 次生成。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -109,6 +109,6 @@
   "p1_release": "p1-r16",
   "p2_release": "p2-r16",
   "rsi_current_protocol": "research/protocols/RSI_wikipedia.md",
-  "rsi_factory_guide": "docs/factory/RSI_wikipedia_W0c.md",
+  "rsi_factory_guide": "docs/factory/RSI_wikipedia_W1.md",
   "rsi_home_guide": "docs/RSI_wikipedia_home.md"
 }

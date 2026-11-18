@@ -2,7 +2,9 @@
 
 依次执行 W0 输入审计、W1 历史重建、GPU 冒烟和完整回放。使用原 P0 第 3 轮冻结解题器、保存的 Wikipedia 搜索轨迹，以及两个数据集原有的支持句。无需新增人工标注或启动检索服务。
 
-本入口默认复现同轮 W0b。当前阶段采用 [W0c 跨轮缓存审计](factory/RSI_wikipedia_W0c.md)，启动 audit 时加原 W0b 汇总和第 0–2 轮合并缓存所在的根目录，prepare 复用同一缓存根目录。家服执行前核验迁移输入的 SHA-256。若两个数据集未达到候选门槛，提交审计汇总等待决策。
+反馈 #24 的 W0c 与 CPU 准备已通过。现有已准备产物在厂内，当前使用 [W1 单卡冻结回放指南](factory/RSI_wikipedia_W1.md)，无需重做审计或历史重建。
+
+如需从原始文件重建 W0c，按 [跨轮缓存审计](factory/RSI_wikipedia_W0c.md) 给 audit 传原 W0b 汇总及第 0–2 轮合并缓存根目录，prepare 复用同一缓存根目录。家服执行前核验迁移输入的 SHA-256。
 
 ## 1. 准备原 P0 的三项输入
 
@@ -39,6 +41,7 @@ bash scripts/run_wiki_rsi.sh prepare --run "$RUN"
 ## 3. 单卡冒烟与完整回放
 
 ~~~bash
+CUDA_VISIBLE_DEVICES="" bash scripts/run_wiki_rsi.sh preflight --run "$RUN"
 CUDA_VISIBLE_DEVICES=0 bash scripts/run_wiki_rsi.sh smoke --run "$RUN"
 CUDA_VISIBLE_DEVICES=0 bash scripts/run_wiki_rsi.sh replay --run "$RUN"
 ~~~

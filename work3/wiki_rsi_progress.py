@@ -5,7 +5,7 @@ import os
 import time
 from pathlib import Path
 
-PHASES = ("audit", "prepare", "smoke", "replay")
+PHASES = ("audit", "prepare", "preflight", "smoke", "replay")
 STATES = ("running", "done", "failed", "blocked", "stalled")
 DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "outputs" / "wiki_rsi"
 
@@ -74,7 +74,7 @@ def board_runs(root, now, limit=5):
                     metrics={key: value for key, value in row["metrics"].items()
                              if key in {"hotpotqa", "2wikimultihopqa", "wall_seconds",
                                         "hotpotqa_added", "2wikimultihopqa_added",
-                                        "generated_tokens", "prompt_tokens", "valid_triplets"}
+                                        "generated_tokens", "prompt_tokens", "valid_triplets", "completion_jobs"}
                              and isinstance(value, (int, float))})
             runs.append({"id": directory.name, "updated_at": data["updated_at"], "phases": phases})
         except (OSError, ValueError, KeyError, AttributeError, TypeError):

@@ -7,6 +7,10 @@ case "${1:-}" in
     export CUDA_VISIBLE_DEVICES="" OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
     python="${DIAG_PYTHON:-python}"
     ;;
+  preflight)
+    export CUDA_VISIBLE_DEVICES="" OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+    python="${REPLAY_PYTHON:-python}"
+    ;;
   smoke|replay)
     python="${REPLAY_PYTHON:-python}"
     ;;
@@ -14,7 +18,7 @@ case "${1:-}" in
     python="${DIAG_PYTHON:-python}"
     ;;
   *)
-    printf '%s\n' "Usage: bash scripts/run_wiki_rsi.sh {audit|prepare|smoke|replay} --run NAME" >&2
+    printf '%s\n' "Usage: bash scripts/run_wiki_rsi.sh {audit|prepare|preflight|smoke|replay} --run NAME" >&2
     exit 2
     ;;
 esac

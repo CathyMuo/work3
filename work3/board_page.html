@@ -369,17 +369,20 @@ async function loadBriefing() {
   }
 }
 
-const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", smoke:"GPU 冒烟", replay:"W1 完整回放"};
+const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", preflight:"W1 启动检查",
+  smoke:"GPU 冒烟", replay:"W1 完整回放"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   checking_history:"检查对话边界和证据对照", checking_checkpoint:"校验权重散列",
   loading_solver:"加载第三轮解题器", generating:"生成并评分",
+  smoke_required:"等待相同运行配置的四题冒烟",
   insufficient_candidates:"W0 候选数未达到门槛",
   insufficient_pairs:"有效准备对数未达到完整回放门槛", FileNotFoundError:"缺少输入文件，请看启动终端",
   ValueError:"输入校验失败，请看启动终端", RuntimeError:"运行失败，请看启动终端"};
 const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   "2wikimultihopqa":"2Wiki 候选 / 可回放", hotpotqa_added:"HotpotQA 缓存新增候选",
   "2wikimultihopqa_added":"2Wiki 缓存新增候选", valid_triplets:"三臂格式均有效",
+  completion_jobs:"生成请求",
   generated_tokens:"生成 token", prompt_tokens:"输入 token", wall_seconds:"生成秒数"};
 
 async function refreshWiki() {

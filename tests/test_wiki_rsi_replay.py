@@ -5,10 +5,24 @@ from pathlib import Path
 
 from work3.p1_agent import format_results
 from work3.wiki_rsi_progress import Progress, board_runs
-from work3.wiki_rsi_replay import paired, raw_passages, score_generation
+from work3.wiki_rsi_replay import PROTOCOL, matching_smoke, paired, raw_passages, score_generation
 
 
 class WikiReplayTest(unittest.TestCase):
+    def test_smoke_gate_uses_runtime_and_provenance_ignores_em(self):
+        config = {"vllm": "0.8.5.post1", "cuda_visible_devices": "0", "tensor_parallel_size": 1}
+        smoke = {"protocol": PROTOCOL, "mode": "smoke", "prepared_sha256": "prepared-hash",
+                 "prepare_summary_sha256": "summary-hash", "runtime": dict(config),
+                 "completion_jobs": 16, "by_dataset": {
+                     ds: {"missing_pair_cases": 2, "valid_triplets": 0, "evidence_specific_rescues": 0}
+                     for ds in ("hotpotqa", "2wikimultihopqa")}}
+        self.assertTrue(matching_smoke(smoke, "prepared-hash", "summary-hash", config))
+        self.assertFalse(matching_smoke(smoke, "different", "summary-hash", config))
+        self.assertFalse(matching_smoke(smoke, "prepared-hash", "summary-hash",
+                                         {**config, "tensor_parallel_size": 2}))
+        smoke["completion_jobs"] = 15
+        self.assertFalse(matching_smoke(smoke, "prepared-hash", "summary-hash", config))
+
     def test_locator_after_empty_multi_query(self):
         def call(*queries):
             arguments = {"name": "search", "arguments": {"query_list": queries}}

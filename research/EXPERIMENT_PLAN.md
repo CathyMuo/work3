@@ -24,8 +24,8 @@ A 的创新证据来自独立页面上的等预算训练差异。已有工作探
 
 | 阶段 | 要回答的问题 | 状态 |
 | --- | --- | --- |
-| W0 输入审计 | 两个数据集能否各找到 60 个有真实来源段落的缺证据失败？ | W0b 恢复了支持句输入，HotpotQA 仍仅有 43 道同轮来源，2Wiki 为 393 道。W0c 扩展早期缓存 |
-| W1 同历史补证据 | 真实证据相对等长无关段落及空对照能救回多少题？ | 历史重建、GPU 冒烟与完整回放已实现，等 W0c 及有效对数准入 |
+| W0 输入审计 | 两个数据集能否各找到 60 个有真实来源段落的缺证据失败？ | W0c 通过。HotpotQA 288 道、2Wiki 1,137 道，各固定抽样 60 道 |
+| W1 同历史补证据 | 真实证据相对等长无关段落及空对照能救回多少题？ | CPU 准备通过。56 道 HotpotQA 和 59 道 2Wiki 缺证据配对题，另有 59 道证据齐全对照题，待单卡冒烟和完整回放 |
 | W2 真实查询 | 缺失证据能否由原检索器在剩余预算下找到？ | 依据 W1 决定 |
 | 迁移试点 | 同预算训练能否改善独立页面上的取证和回答？ | 等实际查询验证 |
 
@@ -43,4 +43,4 @@ A 的创新证据来自独立页面上的等预算训练差异。已有工作探
 | P0 微批次消融 | NO EVIDENCE |
 | P0 旧检索诊断 | INVALID_INPUT |
 
-[W0c 厂内审计](https://github.com/CathyMuo/work3/blob/main/docs/factory/RSI_wikipedia_W0c.md) · [家服启动指南](https://github.com/CathyMuo/work3/blob/main/docs/RSI_wikipedia_home.md) · [当前实验协议](https://github.com/CathyMuo/work3/blob/main/research/protocols/RSI_wikipedia.md)
+[W1 厂内回放指南](https://github.com/CathyMuo/work3/blob/main/docs/factory/RSI_wikipedia_W1.md) · [家服启动指南](https://github.com/CathyMuo/work3/blob/main/docs/RSI_wikipedia_home.md) · [当前实验协议](https://github.com/CathyMuo/work3/blob/main/research/protocols/RSI_wikipedia.md)

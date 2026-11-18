@@ -34,6 +34,7 @@ PIN = "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
 PROTOCOL = "wiki_rsi_w1_v1"
 MAX_NEW = 192
 MIN_PER_DATASET = 40
+SMOKE_PER_DATASET = 2
 NEGATIVE_POOL = 1500
 ANY_ANSWER_TAG = re.compile(r"</?answer>", re.IGNORECASE)
 ANY_TOOL_TAG = re.compile(r"</?tool_(?:call|response)>", re.IGNORECASE)
@@ -489,33 +490,122 @@ def summarize(records):
     return by_dataset
 
 
-def replay(args, run_dir, progress):
+def verified_preparation(run_dir):
     report = read_json(run_dir / "wiki_rsi_prepare_summary.json")
     path = run_dir / "prepared.json"
     if report["protocol"] != PROTOCOL or report["prepared_sha256"] != sha256(path):
         raise ValueError("Prepared cases failed provenance check")
+    data = read_json(path)
+    cases = data["records"]
+    if data["protocol"] != PROTOCOL or len(cases) != report["prepared_cases"]:
+        raise ValueError("Prepared case count or protocol differs from the summary")
+    identities = {(row["dataset"], row["qid"]) for row in cases}
+    counts = Counter((row["dataset"], row["cohort"]) for row in cases)
+    expected = {(ds, cohort) for ds in SUPPORT_DATASETS for cohort in audit.CAPS}
+    if len(identities) != len(cases) or counts.keys() - expected:
+        raise ValueError("Prepared cases contain duplicate IDs or unknown cohorts")
+    for ds, cohort in expected:
+        if counts[ds, cohort] != report["by_dataset"][ds].get(cohort, 0):
+            raise ValueError("Prepared cohort count differs from the summary")
+    for case in cases:
+        expected_arms = ARMS if case["cohort"] == "missing_with_source" else ARMS[:2]
+        prompts = case["prompts"]
+        if set(prompts) != set(expected_arms) or any(
+            not ids or len(ids) + MAX_NEW + 1 > solver.MAX_MODEL_LEN for ids in prompts.values()
+        ):
+            raise ValueError("Prepared case has missing arms or exceeds the context budget")
+    return report, cases, counts
+
+
+def runtime_config(args):
+    installed = version("vllm")
+    if args.expect_vllm and installed != args.expect_vllm:
+        raise ValueError(f"Expected vLLM {args.expect_vllm}, found {installed}")
+    return {
+        "vllm": installed, "transformers": version("transformers"), "torch": version("torch"),
+        "tensor_parallel_size": args.tp, "gpu_memory_utilization": args.gpu_memory,
+        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "dtype": "bfloat16", "temperature": 0, "seed": 0, "max_new_tokens": MAX_NEW,
+        "max_model_len": solver.MAX_MODEL_LEN, "enforce_eager": True, "generation_config": "vllm",
+    }
+
+
+def verify_checkpoint(args, report):
+    if model_fingerprint(args.model_dir) != report["model_sha256"]:
+        raise ValueError("Replay model fingerprint differs from preparation")
+
+
+def preflight(args, run_dir, progress):
+    report, cases, counts = verified_preparation(run_dir)
+    profile = runtime_config(args)
+    if not report["ready_for_full_replay"]:
+        progress.update("blocked", detail="insufficient_pairs")
+        print("Full replay did not pass the preparation gate.", file=sys.stderr)
+        return 2
+    progress.update("running", total=len(cases), detail="checking_checkpoint")
+    verify_checkpoint(args, report)
+    payload = {
+        "protocol": PROTOCOL, "prepared_sha256": report["prepared_sha256"],
+        "prepared_cases": len(cases), "planned_completions": sum(len(case["prompts"]) for case in cases),
+        "by_dataset": {ds: {cohort: counts[ds, cohort] for cohort in audit.CAPS}
+                       for ds in SUPPORT_DATASETS},
+        "versions": {key: profile[key] for key in ("vllm", "transformers", "torch")},
+    }
+    atomic_json(run_dir / "wiki_rsi_preflight_summary.json", payload)
+    progress.update("done", len(cases), len(cases), detail="ready",
+                    metrics={"completion_jobs": payload["planned_completions"]})
+    print(json.dumps(payload, indent=2), flush=True)
+    return 0
+
+
+def matching_smoke(smoke, prepared_sha256, summary_sha256, profile):
+    if (smoke.get("protocol") != PROTOCOL or smoke.get("mode") != "smoke"
+            or smoke.get("prepared_sha256") != prepared_sha256
+            or smoke.get("prepare_summary_sha256") != summary_sha256
+            or any(smoke.get("runtime", {}).get(key) != value for key, value in profile.items())):
+        return False
+    by_dataset = smoke.get("by_dataset", {})
+    return (
+        smoke.get("completion_jobs") == len(SUPPORT_DATASETS) * SMOKE_PER_DATASET * len(ARMS)
+        and all(by_dataset.get(ds, {}).get("missing_pair_cases") == SMOKE_PER_DATASET
+                for ds in SUPPORT_DATASETS)
+    )
+
+
+def replay(args, run_dir, progress):
+    report, cases, _ = verified_preparation(run_dir)
     if args.phase == "replay" and not report["ready_for_full_replay"]:
         progress.update("blocked", detail="insufficient_pairs")
         print("Full replay blocked by the W0/W1 preparation gate; inspect wiki_rsi_prepare_summary.json.",
               file=sys.stderr, flush=True)
         return 2
-    cases = read_json(path)["records"]
+    profile = runtime_config(args)
+    summary_sha256 = sha256(run_dir / "wiki_rsi_prepare_summary.json")
+    if args.phase == "replay":
+        smoke_path = run_dir / "wiki_rsi_smoke_summary.json"
+        if not smoke_path.is_file() or not matching_smoke(
+            read_json(smoke_path), report["prepared_sha256"], summary_sha256, profile
+        ):
+            progress.update("blocked", detail="smoke_required")
+            print("Run the four-case smoke on the same prepared run and runtime before full replay.",
+                  file=sys.stderr, flush=True)
+            return 2
     if args.phase == "smoke":
         cases = [row for ds in SUPPORT_DATASETS for row in
                  [case for case in cases if case["dataset"] == ds and
-                  case["cohort"] == "missing_with_source"][:2]]
+                  case["cohort"] == "missing_with_source"][:SMOKE_PER_DATASET]]
     if not cases:
         raise ValueError("No prepared missing-evidence cases")
     progress.update("running", total=len(cases), detail="checking_checkpoint")
-    if model_fingerprint(args.model_dir) != report["model_sha256"]:
-        raise ValueError("Replay model fingerprint differs from preparation")
+    verify_checkpoint(args, report)
     from vllm import LLM, SamplingParams
 
     progress.update("running", total=len(cases), detail="loading_solver")
     start = time.monotonic()
-    model = LLM(model=str(args.model_dir), tensor_parallel_size=args.tp,
-                max_model_len=solver.MAX_MODEL_LEN, dtype="bfloat16",
-                gpu_memory_utilization=args.gpu_memory, enforce_eager=True, generation_config="vllm")
+    model = LLM(model=str(args.model_dir), tensor_parallel_size=profile["tensor_parallel_size"],
+                max_model_len=profile["max_model_len"], dtype=profile["dtype"], seed=profile["seed"],
+                gpu_memory_utilization=profile["gpu_memory_utilization"],
+                enforce_eager=profile["enforce_eager"], generation_config=profile["generation_config"])
     load_seconds = time.monotonic() - start
     sampling = SamplingParams(temperature=0.0, max_tokens=MAX_NEW,
                               stop_token_ids=[], skip_special_tokens=True)
@@ -533,6 +623,8 @@ def replay(args, run_dir, progress):
             if list(output.prompt_token_ids) != case["prompts"][arm] or len(output.outputs) != 1:
                 raise RuntimeError("vLLM returned a different tokenized prompt or completion count")
             generated = output.outputs[0]
+            if len(generated.token_ids) > MAX_NEW or generated.finish_reason not in {"stop", "length"}:
+                raise RuntimeError("vLLM did not respect the completion budget or termination contract")
             prompt_tokens += len(output.prompt_token_ids)
             generated_tokens += len(generated.token_ids)
             by_case[case["qid"], case["dataset"]][arm] = {
@@ -558,18 +650,17 @@ def replay(args, run_dir, progress):
     result = {
         "protocol": PROTOCOL, "mode": args.phase, "repo_revision": revision(ROOT),
         "drzero_revision": PIN, "prepared_sha256": report["prepared_sha256"],
-        "prepare_summary_sha256": sha256(run_dir / "wiki_rsi_prepare_summary.json"),
-        "runtime": {"vllm": version("vllm"), "transformers": version("transformers"),
-                    "tensor_parallel_size": args.tp, "gpu_memory_utilization": args.gpu_memory,
-                    "checkpoint_load_seconds": round(load_seconds, 2), "temperature": 0,
-                    "max_new_tokens": MAX_NEW, "max_model_len": solver.MAX_MODEL_LEN,
+        "prepare_summary_sha256": summary_sha256,
+        "completion_jobs": sum(len(row["arms"]) for row in records),
+        "runtime": {**profile, "checkpoint_load_seconds": round(load_seconds, 2),
                     "generation_gpu_hours": round(wall_seconds * args.tp / 3600, 5), **metrics},
         "by_dataset": summarize(records),
     }
     atomic_json(run_dir / f"wiki_rsi_{args.phase}_summary.json", result)
     triplets = sum(ds["valid_triplets"] for ds in result["by_dataset"].values())
     progress.update("done", len(records), len(cases), detail="completed",
-                    metrics={**metrics, "valid_triplets": triplets})
+                    metrics={**metrics, "valid_triplets": triplets,
+                             "completion_jobs": result["completion_jobs"]})
     print(json.dumps(result, indent=2), flush=True)
     return 0
 
@@ -605,7 +696,7 @@ def run_audit(args, run_dir, progress):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("audit", "prepare", "smoke", "replay"))
+    parser.add_argument("phase", choices=("audit", "prepare", "preflight", "smoke", "replay"))
     parser.add_argument("--run", required=True, help="run directory name under WIKI_RSI_ROOT")
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -616,6 +707,7 @@ def main(argv=None):
     parser.add_argument("--baseline-summary", type=Path, help="original W0b JSON required by expanded audit")
     parser.add_argument("--tp", type=int, choices=(1, 2, 4), default=1)
     parser.add_argument("--gpu-memory", type=float, default=0.70)
+    parser.add_argument("--expect-vllm", default=os.environ.get("WIKI_RSI_EXPECT_VLLM"))
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", args.run):
         parser.error("--run requires a simple directory name")
@@ -640,7 +732,7 @@ def main(argv=None):
             parser.error("Audit outputs already exist; use a new run name to audit again")
         if args.phase == "prepare" and (run_dir / "wiki_rsi_prepare_summary.json").exists():
             parser.error("Preparation outputs already exist; use the same run for smoke or replay")
-        if (run_dir / f"wiki_rsi_{args.phase}_summary.json").exists():
+        if args.phase != "preflight" and (run_dir / f"wiki_rsi_{args.phase}_summary.json").exists():
             parser.error("Stage already completed; use a new run name for an independent repeat")
         progress.update("running", detail="checking_inputs")
         try:
@@ -648,7 +740,8 @@ def main(argv=None):
                 raise ValueError("Set DRZERO_DIR to the pinned local Dr. Zero checkout")
             if args.phase != "audit" and args.model_dir is None:
                 raise ValueError("Set P0_ITER3_MODEL to the original P0 iteration-3 HF solver")
-            handlers = {"audit": run_audit, "prepare": prepare, "smoke": replay, "replay": replay}
+            handlers = {"audit": run_audit, "prepare": prepare, "preflight": preflight,
+                        "smoke": replay, "replay": replay}
             return handlers[args.phase](args, run_dir, progress)
         except (Exception, KeyboardInterrupt) as error:
             phase = progress.data["phases"][args.phase]
