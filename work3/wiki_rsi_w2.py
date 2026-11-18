@@ -318,7 +318,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("prepare", "run", "contract-prepare", "contract",
                                           "budget-prepare", "budget", "answer-prepare", "answer",
-                                          "candidates-prepare", "candidates"))
+                                          "candidates-prepare", "candidates",
+                                          "candidate-audit-prepare", "candidate-audit"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -338,8 +339,10 @@ def main(argv=None):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", args.run):
         parser.error("--run requires the original W1 run name")
     cpu_stage = args.phase == "prepare" or args.phase.endswith("-prepare")
-    if (args.phase != "candidates" and not args.model_dir) or (cpu_stage and not args.drzero):
-        parser.error("Set P0_ITER3_MODEL and DRZERO_DIR to the original P0 paths")
+    if args.phase not in {"candidates", "candidate-audit", "candidate-audit-prepare"} and not args.model_dir:
+        parser.error("Set P0_ITER3_MODEL to the original P0 model")
+    if cpu_stage and not args.drzero:
+        parser.error("Set DRZERO_DIR to the original Dr. Zero checkout")
     if not cpu_stage and args.phase != "answer" and (not args.retriever or not args.retriever_id):
         parser.error("Set WIKI_RSI_RETRIEVER and WIKI_RSI_RETRIEVER_ID for the original P0 service")
     if not 0 < args.gpu_memory < 1:
@@ -347,7 +350,12 @@ def main(argv=None):
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase.startswith("candidates"):
+    if args.phase.startswith("candidate-audit"):
+        from work3 import wiki_rsi_candidate_audit as audit
+
+        phase, action = (("w3_candidate_audit_prepare", audit.prepare) if cpu_stage
+                         else ("w3_candidate_audit", audit.run))
+    elif args.phase.startswith("candidates"):
         from work3 import wiki_rsi_candidates as candidates
 
         phase, action = (("w3_candidates_prepare", candidates.prepare) if cpu_stage

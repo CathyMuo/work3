@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 case "${1:-}" in
-  prepare|contract-prepare|budget-prepare|answer-prepare|candidates-prepare|candidates)
+  prepare|contract-prepare|budget-prepare|answer-prepare|candidates-prepare|candidates|candidate-audit-prepare|candidate-audit)
     export CUDA_VISIBLE_DEVICES="" OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
     python="${DIAG_PYTHON:-python}"
     ;;

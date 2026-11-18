@@ -27,8 +27,9 @@ A 的创新证据来自独立页面上的等预算训练差异。已有工作探
 | W0 输入审计 | 两个数据集能否各找到 60 个有真实来源段落的缺证据失败？ | W0c 通过。HotpotQA 288 道、2Wiki 1,137 道，各固定抽样 60 道 |
 | W1 同历史补证据 | 真实证据相对等长无关段落及空对照能救回多少题？ | 已完成 578 次生成。相对无关段落，HotpotQA +26.8、2Wiki +33.9 个百分点，各有 12 道证据特异救回 |
 | W2 真实查询 | 缺失证据能否在原索引、剩余预算下找到，取得后能否改善答案？ | W2b 已完成，真实标题返回较等长无关段落提升 25.0 和 23.7 个百分点 |
-| W3a 候选筛查 | 能否从历史构造值得选择的候选查询？ | 在支持页隔离的状态比较原题、候选第一和池中最佳单查询 |
-| 迁移试点 | 同预算训练能否改善独立页面上的取证和回答？ | 等候选筛查和无训练基线 |
+| W3a 候选筛查 | 能否从历史构造值得选择的候选查询？ | 160 道题。候选第一和原题均取齐 0 道，池中最佳单查询取齐 1 道，已知标题探针取齐 25 道 |
+| W3b 归因 | 证据缺在语料、候选动作还是同标题的检索结果？ | 同一批题审计语料，配对比较排序、截断和查询写法，区分一页和多页缺证据 |
+| 迁移试点 | 同预算训练能否改善独立页面上的取证和回答？ | 等可执行取证收益和无训练基线 |
 
 11 月底先完成审计与冻结回放并取得真实吞吐。12 月初用最小试点选择路线。12 月底前完成主对照，1 月上旬锁稿。根据 [ICML 2027 官方征稿](https://icml.cc/Conferences/2027/CallForPapers)，摘要和全文北京时间截止分别为 1 月 15 日和 1 月 23 日 19:59，内部目标为 1 月 12 日和 1 月 19 日。
 
@@ -44,4 +45,4 @@ A 的创新证据来自独立页面上的等预算训练差异。已有工作探
 | P0 微批次消融 | NO EVIDENCE |
 | P0 旧检索诊断 | INVALID_INPUT |
 
-[W3a 厂内指南](https://github.com/CathyMuo/work3/blob/main/docs/factory/RSI_wikipedia_W3_candidates.md) · [当前实验协议](https://github.com/CathyMuo/work3/blob/main/research/protocols/RSI_wikipedia.md)
+[W3b 厂内指南](https://github.com/CathyMuo/work3/blob/main/docs/factory/RSI_wikipedia_W3_audit.md) · [当前实验协议](https://github.com/CathyMuo/work3/blob/main/research/protocols/RSI_wikipedia.md)

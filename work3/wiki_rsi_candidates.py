@@ -58,7 +58,7 @@ def action_list(question, titles):
     return selected + [question]
 
 
-def scan_corpus(path, prepared_states, progress):
+def scan_corpus(path, prepared_states, progress, *, missing_by_title=None):
     wanted = set()
     for case in prepared_states:
         wanted.update(phrases(case["question"]))
@@ -66,7 +66,11 @@ def scan_corpus(path, prepared_states, progress):
             wanted.update(phrases(body))
     catalog = defaultdict(set)
     digest = hashlib.sha256()
-    progress.update("running", detail="scanning_title_catalog")
+    detail = "scanning_title_catalog" if missing_by_title is None else "scanning_candidate_evidence"
+    missing_by_title = missing_by_title or {}
+    title_rows = Counter()
+    found = set()
+    progress.update("running", detail=detail)
     size = path.stat()
     rows = 0
     with path.open("rb") as stream:
@@ -75,17 +79,23 @@ def scan_corpus(path, prepared_states, progress):
             if not line.strip():
                 continue
             article = json.loads(line)
-            title = title_key(article["contents"].split("\n", 1)[0])
+            name, _, body = article["contents"].partition("\n")
+            title = title_key(name)
             cue = text_key(title)
             if cue in wanted:
                 catalog[cue].add(title)
+            if title in missing_by_title:
+                title_rows[title] += 1
+                normalized = text_key(body)
+                found.update((title, sentence) for sentence in missing_by_title[title]
+                             if contains(normalized, sentence))
             rows += 1
             if rows % 100000 == 0:
-                progress.update("running", detail="scanning_title_catalog", metrics={"corpus_rows": rows})
+                progress.update("running", detail=detail, metrics={"corpus_rows": rows})
     end = path.stat()
     if (size.st_size, size.st_mtime_ns) != (end.st_size, end.st_mtime_ns) or not rows:
         raise ValueError("Wikipedia corpus was empty or changed during the title scan")
-    return catalog, digest.hexdigest(), rows
+    return catalog, digest.hexdigest(), rows, title_rows, found
 
 
 def build_pool(dump, tests, refs, blocked_pages):
@@ -207,7 +217,7 @@ def prepare(args, run_dir, progress):
     if not all(counts[ds]["selected"] for ds in SUPPORT_DATASETS):
         raise ValueError("One dataset has no page-disjoint terminal states")
     path = args.corpus or args.drzero / "corpus/wiki-18.jsonl"
-    corpus, digest, corpus_rows = scan_corpus(path, cases, progress)
+    corpus, digest, corpus_rows, _, _ = scan_corpus(path, cases, progress)
     result_path = run_dir / "w3_candidates_prepared.json"
     for case in cases:
         titles = visible_catalog(case["question"], case.pop("visible"), corpus)

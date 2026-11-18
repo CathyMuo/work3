@@ -2,9 +2,9 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-18",
-  "current_stage": "W3a · 独立页面候选查询筛查",
-  "status": "W2b 完成 460 次生成。标题返回相对等长无关段落，HotpotQA 配对 EM 提升 25.0、2Wiki 23.7 个百分点。仍需证明可从真实可见信息构造并选择有效查询。",
-  "next_action": "另取与诊断题支持页隔离的状态，从可见历史构造至多四个候选。比较排序第一与原题的同预算单查询，另报池中最佳单查询的诊断上界。",
+  "current_stage": "W3b · 原语料、标题候选与查询归因",
+  "status": "W3a 完成 160 道题。候选第一和原题均取齐 0 道，候选池中最佳单条取齐 1 道。已知标题探针取齐 25 道，目标标题在完整可见列表有 75 道、旧截断列表有 5 道。",
+  "next_action": "复用 W3a 状态，先审计原语料的逐句覆盖，再做同索引的标题排名、截断和查询语境对照。按缺失支持页数分层。等单查询出现可执行收益后再考虑作答回放和训练。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -109,6 +109,6 @@
   "p1_release": "p1-r16",
   "p2_release": "p2-r16",
   "rsi_current_protocol": "research/protocols/RSI_wikipedia.md",
-  "rsi_factory_guide": "docs/factory/RSI_wikipedia_W3_candidates.md",
+  "rsi_factory_guide": "docs/factory/RSI_wikipedia_W3_audit.md",
   "rsi_home_guide": "docs/RSI_wikipedia_home.md"
 }
