@@ -75,7 +75,7 @@ def board_runs(root, now, limit=5):
                     metrics={key: value for key, value in row["metrics"].items()
                              if key in {"hotpotqa", "2wikimultihopqa", "wall_seconds",
                                         "hotpotqa_added", "2wikimultihopqa_added",
-                                        "queries",
+                                        "queries", "inference_gpus", "legacy_proposals",
                                         "generated_tokens", "prompt_tokens", "valid_triplets", "completion_jobs"}
                              and isinstance(value, (int, float))})
             runs.append({"id": directory.name, "updated_at": data["updated_at"], "phases": phases})

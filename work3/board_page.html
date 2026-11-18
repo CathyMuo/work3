@@ -377,6 +377,7 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   checking_history:"检查对话边界和证据对照", checking_checkpoint:"校验权重散列",
   loading_solver:"加载第三轮解题器", generating:"生成并评分",
   checking_retriever:"复查原 P0 检索服务", querying_wikipedia:"查询固定 Wikipedia 索引",
+  generating_queries:"生成历史查询对照", waiting_native_workers:"等待原生查询副本",
   retriever_parity:"检索服务未复现原轨迹的返回",
   smoke_required:"等待相同运行配置的四题冒烟",
   insufficient_candidates:"W0 候选数未达到门槛",
@@ -385,8 +386,9 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
 const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   "2wikimultihopqa":"2Wiki 候选 / 可回放", hotpotqa_added:"HotpotQA 缓存新增候选",
   "2wikimultihopqa_added":"2Wiki 缓存新增候选", valid_triplets:"三臂格式均有效",
-  completion_jobs:"生成请求", queries:"已执行检索查询",
-  generated_tokens:"生成 token", prompt_tokens:"输入 token", wall_seconds:"生成秒数"};
+  completion_jobs:"生成请求", queries:"已执行检索查询", inference_gpus:"推理用卡",
+  legacy_proposals:"已生成旧提示查询",
+  generated_tokens:"生成 token", prompt_tokens:"输入 token", wall_seconds:"运行秒数"};
 
 async function refreshWiki() {
   const target = $("#wiki-progress");

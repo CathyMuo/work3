@@ -326,8 +326,11 @@ def main(argv=None):
     parser.add_argument("--retriever-id", default=os.environ.get("WIKI_RSI_RETRIEVER_ID"))
     parser.add_argument("--expect-vllm", default=os.environ.get("WIKI_RSI_EXPECT_VLLM"))
     parser.add_argument("--gpu-memory", type=float, default=0.70)
+    parser.add_argument("--native-gpus", help="optional additional GPU indices for the native-query arm")
     parser.set_defaults(tp=1)
     args = parser.parse_args(argv)
+    if args.native_gpus is not None and args.phase != "contract":
+        parser.error("--native-gpus applies to the contract phase")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", args.run):
         parser.error("--run requires the original W1 run name")
     cpu_stage = args.phase in {"prepare", "contract-prepare"}

@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from collections import Counter
 
 from work3 import p1_agent as solver
@@ -10,6 +11,7 @@ from work3 import wiki_rsi_w2 as w2
 from work3.evidence_ref import contains, question_key, sha256, text_key
 from work3.p0_retrieval_diag import SUPPORT_DATASETS, dataset_name, question_of, revision
 from work3.wiki_rsi_progress import atomic_json
+from work3.wiki_rsi_decode import DecodeEngine, native_gpu_ids, native_replicas
 
 PROTOCOL = "wiki_rsi_w2_query_contract_v1"
 ARMS = ("strict_repeat", "same_bytes_compatible", "native_prompt")
@@ -178,7 +180,49 @@ def summarize(rows):
     return report
 
 
+def decode_batches(args, run_dir, progress, batches, profile, devices):
+    native_inputs = [[case["native"] for case in batch] for batch in batches]
+    legacy, native = [], {}
+    gpu_count = 1 + min(len(devices), len(batches))
+    metrics = {"inference_gpus": gpu_count}
+    total = sum(map(len, batches))
+    progress.update("running", 0, total, detail="loading_solver", metrics=metrics)
+    start = time.monotonic()
+    with native_replicas(run_dir, devices, native_inputs, args.model_dir, profile) as replicas:
+        load_start = time.monotonic()
+        engine = DecodeEngine(args.model_dir, profile)
+        load_seconds = time.monotonic() - load_start
+        legacy_seconds = native_seconds = 0
+        issued = 0
+        for index, batch in enumerate(batches):
+            replicas.require_healthy()
+            before = time.monotonic()
+            legacy.append(engine.generate([case["proposal"] for case in batch]))
+            legacy_seconds += time.monotonic() - before
+            if not devices:
+                before = time.monotonic()
+                native[index] = engine.generate(native_inputs[index])
+                native_seconds += time.monotonic() - before
+            issued += len(batch)
+            progress.update("running", 0, total, detail="generating_queries",
+                            metrics={**metrics, "legacy_proposals": issued})
+        native_reports = {}
+        if devices:
+            progress.update("running", 0, total, detail="waiting_native_workers",
+                            metrics={**metrics, "legacy_proposals": issued})
+            native, native_reports = replicas.collect()
+    timings = {
+        "legacy_model_load_seconds": round(load_seconds, 3),
+        "legacy_generation_seconds": round(legacy_seconds, 3),
+        "local_native_generation_seconds": round(native_seconds, 3),
+        "native_replicas": native_reports,
+        "model_load_and_generation_wall_seconds": round(time.monotonic() - start, 3),
+    }
+    return legacy, native, timings
+
+
 def run(args, run_dir, progress):
+    start = time.monotonic()
     path = run_dir / "w2_contract_prepared.json"
     report_path = run_dir / "wiki_rsi_w2_contract_prepare_summary.json"
     report, data = w1.read_json(report_path), w1.read_json(path)
@@ -192,6 +236,7 @@ def run(args, run_dir, progress):
     compare = {**profile, "max_new_tokens": w2.QUERY_TOKENS}
     if any(prior.get(key) != value for key, value in compare.items()):
         raise ValueError("Use the same GPU and generation configuration as W2a for the legacy repeat")
+    devices = native_gpu_ids(profile["cuda_visible_devices"], args.native_gpus)
     w1.verify_checkpoint(args, w1.read_json(run_dir / "wiki_rsi_prepare_summary.json"))
     cases = data["records"]
     progress.update("running", 0, len(cases), detail="checking_retriever")
@@ -204,35 +249,20 @@ def run(args, run_dir, progress):
         print(json.dumps(parity, indent=2), flush=True)
         return 2
 
-    from vllm import LLM, SamplingParams
-
-    progress.update("running", 0, len(cases), detail="loading_solver")
-    engine = LLM(model=str(args.model_dir), tensor_parallel_size=args.tp, max_model_len=solver.MAX_MODEL_LEN,
-                 dtype=profile["dtype"], seed=profile["seed"], gpu_memory_utilization=args.gpu_memory,
-                 enforce_eager=True, generation_config="vllm")
-    params = SamplingParams(temperature=0, max_tokens=w2.QUERY_TOKENS, skip_special_tokens=True)
+    batches = [cases[offset:offset + 8] for offset in range(0, len(cases), 8)]
+    checked_at = time.monotonic()
+    legacy_batches, native_batches, timings = decode_batches(
+        args, run_dir, progress, batches, compare, devices)
+    timings["input_and_anchor_checks_seconds"] = round(checked_at - start, 3)
+    gpu_count = 1 + len(timings["native_replicas"])
     rows = []
     generated_tokens = 0
     physical_queries = 0
-    for offset in range(0, len(cases), 8):
-        batch = cases[offset:offset + 8]
-        generations = {}
-        for variant in ("proposal", "native"):
-            prompts = [{"prompt_token_ids": case[variant]} for case in batch]
-            outputs = engine.generate(prompts, sampling_params=params, use_tqdm=False)
-            generations[variant] = []
-            for prompt, response in zip(prompts, outputs, strict=True):
-                if list(response.prompt_token_ids) != prompt["prompt_token_ids"] or len(response.outputs) != 1:
-                    raise RuntimeError("Prompt or completion count changed in vLLM")
-                completion = response.outputs[0]
-                length = len(completion.token_ids)
-                if length > w2.QUERY_TOKENS or completion.finish_reason not in {"stop", "length"}:
-                    raise RuntimeError("Query generation did not respect the fixed token budget")
-                generated_tokens += length
-                generations[variant].append({"text": completion.text, "finish": completion.finish_reason,
-                                             "tokens": length})
+    retrieval_started = time.monotonic()
+    for index, batch in enumerate(batches):
         lookups, chunk = {}, []
-        for case, legacy, native in zip(batch, generations["proposal"], generations["native"], strict=True):
+        for case, legacy, native in zip(batch, legacy_batches[index], native_batches[index], strict=True):
+            generated_tokens += legacy["tokens"] + native["tokens"]
             strict = w2.parse_query(legacy["text"], legacy["finish"])
             compatible, legacy_type = compatible_query(legacy["text"], legacy["finish"])
             alternate, native_type = compatible_query(native["text"], native["finish"])
@@ -253,14 +283,19 @@ def run(args, run_dir, progress):
         physical_queries += len(lookups)
         rows.extend(chunk)
         progress.update("running", len(rows), len(cases), detail="querying_wikipedia",
-                        metrics={"generated_tokens": generated_tokens, "queries": physical_queries})
+                        metrics={"generated_tokens": generated_tokens, "queries": physical_queries,
+                                 "inference_gpus": gpu_count})
+    timings["retrieval_and_scoring_seconds"] = round(time.monotonic() - retrieval_started, 3)
+    timings["wall_seconds"] = round(time.monotonic() - start, 3)
     atomic_json(run_dir / "w2_contract_cases.json", {"protocol": PROTOCOL, "records": rows})
     result = {"protocol": PROTOCOL, "repo_revision": revision(w2.ROOT), "runtime": compare,
+              "inference_gpus": gpu_count, "timings": timings,
               "retriever": parity, "physical_queries_excluding_anchors": physical_queries,
               "generated_tokens": generated_tokens, "preparation_sha256": sha256(report_path),
               "by_dataset": summarize(rows)}
     atomic_json(run_dir / "wiki_rsi_w2_contract_summary.json", result)
     progress.update("done", len(rows), len(cases), detail="completed",
-                    metrics={"generated_tokens": generated_tokens, "queries": physical_queries})
+                    metrics={"generated_tokens": generated_tokens, "queries": physical_queries,
+                             "inference_gpus": gpu_count, "wall_seconds": timings["wall_seconds"]})
     print(json.dumps(result, indent=2), flush=True)
     return 0
