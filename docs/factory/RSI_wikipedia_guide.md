@@ -1,6 +1,6 @@
 # Wikipedia RSI 首轮输入审计厂内指南
 
-当前厂内执行入口为 [W0b CPU 复审](RSI_wikipedia_W0b.md)。此页保留首次 W0 的复现方式。家服执行后续阶段时使用[家服启动指南](../RSI_wikipedia_home.md)。
+当前厂内执行入口为 [W0c 跨轮缓存审计](RSI_wikipedia_W0c.md)。此页保留首次 W0 的复现方式。家服执行后续阶段时使用[家服启动指南](../RSI_wikipedia_home.md)。
 
 当前只运行 W0。沿用原 P0 的 Dr. Zero 工作目录、评测轨迹、数据文件和原 Python 环境。脚本用 CPU 读取原文件，不启动 vLLM 或检索服务，也无需变动现有训练。
 

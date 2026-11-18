@@ -206,35 +206,50 @@ def raw_passages(output):
                     yield (query_number, index + 1), (header[2], body)
 
 
-def catalog(dump, cases):
+def source_coordinate(locator):
+    if len(locator) == 3:
+        return (audit.CURRENT, *locator)
+    if len(locator) == 4:
+        return tuple(locator)
+    raise ValueError("Invalid evidence locator length")
+
+
+def catalog(dump, cases, caches=None):
     target_lines = {case["dump_line"] for case in cases}
-    sources = defaultdict(set)
+    sources = defaultdict(lambda: defaultdict(set))
     for case in cases:
-        for line, query, rank in case["support_passages"]:
-            sources[line].add((query, rank))
+        for locator in case["support_passages"]:
+            iteration, line, query, rank = source_coordinate(locator)
+            sources[iteration][line].add((query, rank))
     negative = {ds: {} for ds in SUPPORT_DATASETS}
     rows, passages = {}, {}
-    for line, item in read_lines(dump):
-        ds = dataset_name(item["data_source"])
-        if line in target_lines:
-            rows[line] = item
-        take = ds in negative and line not in target_lines and len(negative[ds]) < NEGATIVE_POOL
-        if line not in sources and not take:
+    for iteration, path in {audit.CURRENT: dump, **(caches or {})}.items():
+        target = iteration == audit.CURRENT
+        locations = sources[iteration]
+        if not target and not locations:
             continue
-        try:
-            trace = trace_of(item["output"])
-        except TraceError:
-            continue
-        if trace.errors:
-            continue
-        for coord, passage in raw_passages(item["output"]):
-            if coord in sources.get(line, ()):
-                passages[(line, *coord)] = passage
-            if take and len(negative[ds]) < NEGATIVE_POOL and not any(
-                RISKY_TEXT.search(text) for text in passage
-            ):
-                normalized = title_key(passage[0]), text_key(passage[1])
-                negative[ds].setdefault(normalized, passage)
+        for line, item in read_lines(path):
+            ds = dataset_name(item["data_source"])
+            if target and line in target_lines:
+                rows[line] = item
+            take = (target and ds in negative and line not in target_lines and
+                    len(negative[ds]) < NEGATIVE_POOL)
+            if line not in locations and not take:
+                continue
+            try:
+                trace = trace_of(item["output"])
+            except TraceError:
+                continue
+            if trace.errors:
+                continue
+            for coord, passage in raw_passages(item["output"]):
+                if coord in locations.get(line, ()):
+                    passages[(ds, iteration, line, *coord)] = passage
+                if take and len(negative[ds]) < NEGATIVE_POOL and not any(
+                    RISKY_TEXT.search(text) for text in passage
+                ):
+                    normalized = title_key(passage[0]), text_key(passage[1])
+                    negative[ds].setdefault(normalized, passage)
     return rows, passages, negative
 
 
@@ -294,7 +309,8 @@ def prepare_case(tok, item, initial, case, aliases, reference, sources, pool):
 
     prompts = {"original_replay": boundary, "empty": with_passages(tok, prefix, [])}
     if expected:
-        evidence = [sources.get(tuple(locator)) for locator in case["support_passages"]]
+        evidence = [sources.get((case["dataset"], *source_coordinate(locator)))
+                    for locator in case["support_passages"]]
         if not evidence or any(
             doc is None or any(RISKY_TEXT.search(text) for text in doc) for doc in evidence
         ) or not all(any(title_key(doc[0]) == title and contains(text_key(doc[1]), sentence)
@@ -310,6 +326,7 @@ def prepare_case(tok, item, initial, case, aliases, reference, sources, pool):
     if max(map(len, prompts.values())) + MAX_NEW + 1 > solver.MAX_MODEL_LEN:
         raise Excluded("context_budget")
     return {"dataset": case["dataset"], "cohort": case["cohort"], "qid": case["question_key"],
+            "earliest_source_iteration": case.get("earliest_source_iteration", audit.CURRENT),
             "aliases": aliases, "original_answer": recorded, "prompts": prompts}
 
 
@@ -322,6 +339,15 @@ def prepare(args, run_dir, progress):
                    "references_sha256": sha256(args.references)}
     if any(baseline["provenance"].get(key) != digest for key, digest in file_hashes.items()):
         raise ValueError("W0 input hashes differ; run a new audit with the intended P0 inputs")
+    cache_dumps = audit.source_dumps(args.source_cache_root)
+    cache_provenance = audit.source_provenance(cache_dumps)
+    if cache_provenance != baseline["provenance"].get("source_cache_dumps", {}):
+        raise ValueError("Source cache hashes differ; use the same P0 source-cache root as the audit")
+    if baseline["protocol"] != (audit.AUDIT_W0C if cache_dumps else audit.AUDIT_V1):
+        raise ValueError("Unsupported W0 summary protocol")
+    manifest_sha256 = sha256(manifest)
+    if cache_dumps and baseline["provenance"].get("manifest_sha256") != manifest_sha256:
+        raise ValueError("W0c manifest hash differs from the audit")
     cases = [case for _, case in read_lines(manifest)]
     identities = {(case["dataset"], case["question_key"]) for case in cases}
     if len(identities) != len(cases):
@@ -341,7 +367,7 @@ def prepare(args, run_dir, progress):
     initial = initial_messages(test, identities)
     with gzip.open(args.references, "rt", encoding="utf-8") as stream:
         refs = json.load(stream)["datasets"]
-    rows, sources, negatives = catalog(dump, cases)
+    rows, sources, negatives = catalog(dump, cases, cache_dumps)
     pools = {}
     for ds, entries in negatives.items():
         lengths = doc_lengths(tok, list(entries.values())) if entries else []
@@ -352,6 +378,11 @@ def prepare(args, run_dir, progress):
     counts = {ds: Counter() for ds in SUPPORT_DATASETS}
     for number, case in enumerate(cases, 1):
         ds, qid = case["dataset"], case["question_key"]
+        origin = None
+        if case["cohort"] == "missing_with_source" and cache_dumps:
+            origin = ("iter3_only" if case["earliest_source_iteration"] == audit.CURRENT
+                      else "earlier_cache")
+            counts[ds][f"{origin}:input"] += 1
         item = rows.get(case["dump_line"])
         try:
             if item is None:
@@ -363,12 +394,15 @@ def prepare(args, run_dir, progress):
         else:
             prepared.append(record)
             counts[ds][case["cohort"]] += 1
+            if origin:
+                counts[ds][f"{origin}:prepared"] += 1
         if number % 5 == 0 or number == len(cases):
             progress.update("running", number, len(cases), detail="checking_history")
     report = {
         "protocol": PROTOCOL, "repo_revision": revision(ROOT), "drzero_revision": PIN,
         "transformers_version": version("transformers"), "model_sha256": checkpoint,
-        "source": {**file_hashes, "manifest_sha256": sha256(manifest)},
+        "source": {**file_hashes, "source_cache_dumps": cache_provenance,
+                   "manifest_sha256": manifest_sha256},
         "w0_by_dataset": baseline["by_dataset"], "by_dataset": counts, "prepared_cases": len(prepared),
         "ready_for_full_replay": baseline["ready_for_replay_preparation"] and all(
             counts[ds]["missing_with_source"] >= MIN_PER_DATASET for ds in SUPPORT_DATASETS),
@@ -414,8 +448,14 @@ def summarize(records):
     by_dataset = {}
     for ds in SUPPORT_DATASETS:
         dataset = [row for row in records if row["dataset"] == ds]
-        missing = [row["arms"] for row in dataset if row["cohort"] == "missing_with_source"]
+        missing_rows = [row for row in dataset if row["cohort"] == "missing_with_source"]
+        missing = [row["arms"] for row in missing_rows]
         comparable = [row for row in missing if all(row[arm]["valid"] for arm in ARMS[1:])]
+        origins = {"iter3_only": [], "earlier_cache": []}
+        for row in missing_rows:
+            origin = ("iter3_only" if row.get("earliest_source_iteration", audit.CURRENT) == audit.CURRENT
+                      else "earlier_cache")
+            origins[origin].append(row["arms"])
         grouped = {cohort: {} for cohort in audit.CAPS}
         for cohort in grouped:
             for arm in ARMS:
@@ -437,6 +477,10 @@ def summarize(records):
             "evidence_vs_empty": paired(missing, "evidence", "empty"),
             "valid_triplets_evidence_vs_irrelevant": paired(comparable, "evidence", "irrelevant"),
             "valid_triplets_evidence_vs_empty": paired(comparable, "evidence", "empty"),
+            "by_evidence_source": {
+                name: {"evidence_vs_irrelevant": paired(arms, "evidence", "irrelevant"),
+                       "evidence_vs_empty": paired(arms, "evidence", "empty")}
+                for name, arms in origins.items()},
             "original_p0_wrong_cases": len(dataset),
             "original_replay_p0_em_correct": sum(row["arms"]["original_replay"]["p0_em"] for row in dataset),
             "original_replay_same_normalized_answer": sum(row["same_original_answer"] for row in dataset),
@@ -503,6 +547,7 @@ def replay(args, run_dir, progress):
             same = (solver.normalize_answer(replay_answer) == solver.normalize_answer(original)
                     if replay_answer is not None and original is not None else replay_answer == original)
             records.append({"dataset": case["dataset"], "cohort": case["cohort"], "qid": case["qid"],
+                            "earliest_source_iteration": case.get("earliest_source_iteration", audit.CURRENT),
                             "same_original_answer": same, "arms": arms})
         atomic_json(run_dir / f"{args.phase}_cases.json", {"protocol": PROTOCOL, "records": records})
         progress.update("running", len(records), len(cases), detail="generating",
@@ -534,14 +579,26 @@ def run_audit(args, run_dir, progress):
     audit_dir = run_dir / "w0"
     with TemporaryDirectory(prefix=".audit-", dir=run_dir) as temporary:
         staging = Path(temporary) / "w0"
-        audit.main(["--eval-dump", str(dump), "--test-parquet", str(test),
-                    "--references", str(args.references), "--out-dir", str(staging)])
+        options = ["--eval-dump", str(dump), "--test-parquet", str(test),
+                   "--references", str(args.references), "--out-dir", str(staging)]
+        if args.source_cache_root:
+            options.extend(["--source-cache-root", str(args.source_cache_root),
+                            "--baseline-summary", str(args.baseline_summary)])
+            progress.update("running", 0, 4, detail="scanning_caches")
+        audit.main(options, on_scan=lambda done, total: progress.update(
+            "running", done, total, detail="scanning_caches"))
         staging.rename(audit_dir)
     summary = read_json(audit_dir / "wiki_rsi_input_summary.json")
     metrics = {ds: summary["by_dataset"][ds].get("selected_missing_with_source", 0)
                for ds in SUPPORT_DATASETS}
+    if args.source_cache_root:
+        for ds in SUPPORT_DATASETS:
+            row = summary["by_dataset"][ds]
+            metrics[f"{ds}_added"] = (row.get("missing_with_source", 0) -
+                                     row.get("missing_with_source_floor_iter3", 0))
     ready = summary["ready_for_replay_preparation"]
-    progress.update("done" if ready else "blocked", 1, 1,
+    total = 4 if args.source_cache_root else 1
+    progress.update("done" if ready else "blocked", total, total,
                     detail="ready" if ready else "insufficient_candidates", metrics=metrics)
     return 0
 
@@ -555,6 +612,8 @@ def main(argv=None):
     parser.add_argument("--test-parquet", type=Path, default=os.environ.get("P0_TEST_PARQUET"))
     parser.add_argument("--model-dir", type=Path, default=os.environ.get("P0_ITER3_MODEL"))
     parser.add_argument("--references", type=Path, default=WIKI_RSI_REFERENCES)
+    parser.add_argument("--source-cache-root", type=Path, default=os.environ.get("P0_SOURCE_CACHE_ROOT"))
+    parser.add_argument("--baseline-summary", type=Path, help="original W0b JSON required by expanded audit")
     parser.add_argument("--tp", type=int, choices=(1, 2, 4), default=1)
     parser.add_argument("--gpu-memory", type=float, default=0.70)
     args = parser.parse_args(argv)
@@ -562,6 +621,8 @@ def main(argv=None):
         parser.error("--run requires a simple directory name")
     if not 0 < args.gpu_memory < 1:
         parser.error("--gpu-memory must be between zero and one")
+    if args.phase == "audit" and bool(args.baseline_summary) != bool(args.source_cache_root):
+        parser.error("Expanded audit requires both --source-cache-root and --baseline-summary")
     run_dir = progress_root() / args.run
     if args.phase == "audit":
         run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
