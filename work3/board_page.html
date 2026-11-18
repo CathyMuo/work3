@@ -168,7 +168,10 @@ details { border-top:1px solid var(--line); padding:8px 0 2px; margin-top:10px; 
     <div class="card" id="c-reward" hidden><h2>P2 出题奖励日志（每步一次）</h2><div class="charts" id="c-reward-charts"></div></div>
     <div class="card"><h2>GPU 与检索服务历史（看板启动后每 10 秒采样，保留 6 小时）</h2><div class="charts" id="c-hist"></div></div>
   </section>
-  <section id="brief"><article class="brief" id="brief-body">加载中…</article></section>
+  <section id="brief">
+    <article class="brief" id="brief-body">加载中…</article>
+    <div id="wiki-progress" aria-live="polite"></div>
+  </section>
   <section id="res" hidden></section>
 </main>
 <script>
@@ -357,12 +360,50 @@ async function loadBriefing() {
     if (!response.ok) throw new Error("研究数据返回 " + response.status);
     const result = await response.json();
     $("#brief-body").innerHTML =
-      "<div class=\"hero\"><h1>固定 Wikipedia 索引上的证据取证</h1>" +
-      "<p>先验明缺失证据是否能救回答案，再检验原搜索工具能否在预算内找到它。</p>" +
+      "<div class=\"hero\"><h1>哪些检索失败值得用来训练？</h1>" +
+      "<p>用真实 Wikipedia 轨迹检验补充证据能否救回答案，再测修复经验是否能迁移到新页面。</p>" +
       "<p><strong>当前阶段</strong> " + esc(result.state.current_stage) + "</p></div>" +
       "<div class=\"card\">" + result.plan_html + "</div>";
   } catch (error) {
     $("#brief-body").textContent = "研究说明读取失败：" + error.message;
+  }
+}
+
+const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", smoke:"GPU 冒烟", replay:"W1 完整回放"};
+const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
+  checking_history:"检查对话边界和证据对照", checking_checkpoint:"校验权重散列",
+  loading_solver:"加载第三轮解题器", generating:"生成并评分",
+  insufficient_candidates:"W0 候选数未达到门槛",
+  insufficient_pairs:"有效准备对数未达到完整回放门槛", FileNotFoundError:"缺少输入文件，请看启动终端",
+  ValueError:"输入校验失败，请看启动终端", RuntimeError:"运行失败，请看启动终端"};
+const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
+  "2wikimultihopqa":"2Wiki 候选 / 可回放", valid_triplets:"三臂格式均有效",
+  generated_tokens:"生成 token", prompt_tokens:"输入 token", wall_seconds:"生成秒数"};
+
+async function refreshWiki() {
+  const target = $("#wiki-progress");
+  try {
+    const response = await fetch("/api/wiki-rsi", {cache: "no-store"});
+    if (!response.ok) throw new Error(response.status);
+    const {runs} = await response.json();
+    target.innerHTML = '<div class="card"><h2>家服实验进度</h2>' +
+      (runs.length ? runs.map(run => {
+        const rows = Object.entries(wikiPhases).map(([key, label]) => {
+          const row = run.phases[key] || {state:"pending", metrics:{}};
+          const status = row.state === "blocked" ? "等待输入条件" : STATE[row.state];
+          const units = row.total ? row.done + " / " + row.total : "—";
+          const details = Object.entries(row.metrics).map(([name, value]) =>
+            esc(wikiMetrics[name]) + " " + esc(value)).join(" · ");
+          return "<tr><td>" + esc(label) + '</td><td class="' + esc(row.state) + '">' + esc(status) +
+            "</td><td>" + units + "</td><td>" + esc(wikiDetails[row.detail] || "") +
+            (details ? '<div class="mute">' + details + "</div>" : "") + "</td></tr>";
+        }).join("");
+        return "<h3>" + esc(run.id) + ' <span class="mute small">' + clock(run.updated_at) + "</span></h3>" +
+          '<table class="small"><thead><tr><th>阶段</th><th>状态</th><th>处理量</th><th>说明</th></tr></thead>' +
+          "<tbody>" + rows + "</tbody></table>";
+      }).join("") : '<p class="mute">还没有启动 Wikipedia 实验。</p>') + "</div>";
+  } catch (error) {
+    target.textContent = "实验进度暂时无法读取。";
   }
 }
 
@@ -593,12 +634,16 @@ $("#c-none").onclick = () => setKeys(() => false);
 function show(which) {
   for (const w of ["live", "cur", "brief", "res"]) { $("#" + w).hidden = w !== which; $("#t-" + w).classList.toggle("on", w === which); }
   if (which === "res") loadResearch();
-  if (which === "brief") loadBriefing();
+  if (which === "brief") { loadBriefing(); refreshWiki(); }
+  if (which === "live") tick();
   if (which === "cur") { (cur.loaded ? curLoad() : curInit()); loadHistory(); }
   try { history.replaceState(null, "", "#" + which); } catch (e) {}
 }
 for (const w of ["live", "cur", "brief", "res"]) $("#t-" + w).onclick = () => show(w);
-tick(); setInterval(tick, 8000);
+setInterval(() => {
+  if (!$("#live").hidden) tick();
+  if (!$("#brief").hidden) refreshWiki();
+}, 8000);
 const tab = location.hash.slice(1);
 show(["live", "cur", "brief", "res"].includes(tab) ? tab : "brief");
 setInterval(() => { if (!$("#cur").hidden) { curLoad(); loadHistory(); } }, 15000);

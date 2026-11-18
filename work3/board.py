@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
+from work3.wiki_rsi_progress import board_runs, progress_root
+
 ROOT = Path(__file__).resolve().parents[1]
 PAGE = Path(__file__).resolve().parent / "board_page.html"
 STALL_SECONDS = 20 * 60
@@ -1122,6 +1124,8 @@ def make_handler(board: Board):
                     self.send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
                 elif url.path == "/api/research":
                     self.json(research(board.root))
+                elif url.path == "/api/wiki-rsi":
+                    self.json({"runs": board_runs(progress_root(), time.time())})
                 elif url.path == "/api/briefing":
                     path = board.root / "research" / "briefing.html"
                     body = path.read_bytes() if path.exists() else "<p>research/briefing.html 不存在</p>".encode()

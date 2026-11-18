@@ -3,7 +3,7 @@
 #   bash scripts/run_board.sh            -> http://127.0.0.1:8766/
 # Reads $DRZERO_DIR/work3_p0, $DRZERO_DIR/work3_p1 and, for P2, $ARM_ROOT/{beta,ncp}.
 # Env: BOARD_PYTHON (python), BOARD_HOST (127.0.0.1), BOARD_PORT (8766), DRZERO_DIR, ARM_ROOT,
-#      BOARD_P0_OUT / BOARD_P1_OUT (override the run directories).
+#      BOARD_P0_OUT / BOARD_P1_OUT (override the run directories), WIKI_RSI_ROOT.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 py=${BOARD_PYTHON:-python}

@@ -121,14 +121,16 @@ def collect(dump: Path, tests: dict, refs: dict) -> tuple[dict, list[dict]]:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--eval-root", type=Path, required=True)
+    evaluation = parser.add_mutually_exclusive_group(required=True)
+    evaluation.add_argument("--eval-root", type=Path)
+    evaluation.add_argument("--eval-dump", type=Path, help="explicit original iteration-3 merged JSONL")
     parser.add_argument("--test-parquet", type=Path, required=True)
     parser.add_argument("--references", type=Path, default=ROOT / "research/data/evidence_dev_v1.json.gz")
     parser.add_argument("--out-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.out_dir.exists():
         parser.error("Use a new output directory")
-    dump = resolve_dump(args.eval_root / "iter3")
+    dump = resolve_dump(args.eval_dump or args.eval_root / "iter3")
     tests, totals = test_questions(args.test_parquet)
     with gzip.open(args.references, "rt", encoding="utf-8") as stream:
         ref = json.load(stream)
