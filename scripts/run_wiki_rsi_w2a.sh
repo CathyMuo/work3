@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 case "${1:-}" in
-  prepare|contract-prepare|budget-prepare|answer-prepare)
+  prepare|contract-prepare|budget-prepare|answer-prepare|candidates-prepare|candidates)
     export CUDA_VISIBLE_DEVICES="" OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
     python="${DIAG_PYTHON:-python}"
     ;;
@@ -11,7 +11,7 @@ case "${1:-}" in
     python="${REPLAY_PYTHON:-python}"
     ;;
   *)
-    printf '%s\n' "Usage: bash scripts/run_wiki_rsi_w2a.sh {prepare|run|contract-prepare|contract|budget-prepare|budget|answer-prepare|answer} --run NAME" >&2
+    printf '%s\n' "Usage: bash scripts/run_wiki_rsi_w2a.sh PHASE --run NAME (see the factory guide for supported phases)" >&2
     exit 2
     ;;
 esac

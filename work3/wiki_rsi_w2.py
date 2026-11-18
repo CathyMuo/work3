@@ -317,13 +317,15 @@ def main(argv=None):
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("prepare", "run", "contract-prepare", "contract",
-                                          "budget-prepare", "budget", "answer-prepare", "answer"))
+                                          "budget-prepare", "budget", "answer-prepare", "answer",
+                                          "candidates-prepare", "candidates"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
     parser.add_argument("--test-parquet", type=Path, default=os.environ.get("P0_TEST_PARQUET"))
     parser.add_argument("--model-dir", type=Path, default=os.environ.get("P0_ITER3_MODEL"))
     parser.add_argument("--references", type=Path, default=WIKI_RSI_REFERENCES)
+    parser.add_argument("--corpus", type=Path, default=os.environ.get("WIKI_RSI_CORPUS"))
     parser.add_argument("--retriever", default=os.environ.get("WIKI_RSI_RETRIEVER"))
     parser.add_argument("--retriever-id", default=os.environ.get("WIKI_RSI_RETRIEVER_ID"))
     parser.add_argument("--expect-vllm", default=os.environ.get("WIKI_RSI_EXPECT_VLLM"))
@@ -336,7 +338,7 @@ def main(argv=None):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", args.run):
         parser.error("--run requires the original W1 run name")
     cpu_stage = args.phase == "prepare" or args.phase.endswith("-prepare")
-    if not args.model_dir or (cpu_stage and not args.drzero):
+    if (args.phase != "candidates" and not args.model_dir) or (cpu_stage and not args.drzero):
         parser.error("Set P0_ITER3_MODEL and DRZERO_DIR to the original P0 paths")
     if not cpu_stage and args.phase != "answer" and (not args.retriever or not args.retriever_id):
         parser.error("Set WIKI_RSI_RETRIEVER and WIKI_RSI_RETRIEVER_ID for the original P0 service")
@@ -345,7 +347,12 @@ def main(argv=None):
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase.startswith("answer"):
+    if args.phase.startswith("candidates"):
+        from work3 import wiki_rsi_candidates as candidates
+
+        phase, action = (("w3_candidates_prepare", candidates.prepare) if cpu_stage
+                         else ("w3_candidates", candidates.run))
+    elif args.phase.startswith("answer"):
         from work3 import wiki_rsi_w2_answer as answer
 
         phase, action = ("w2_answer_prepare", answer.prepare) if cpu_stage else ("w2_answer", answer.run)

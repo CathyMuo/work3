@@ -11,7 +11,7 @@ from pathlib import Path
 
 PHASES = ("audit", "prepare", "preflight", "smoke", "replay", "w2a_prepare", "w2a",
           "w2_contract_prepare", "w2_contract", "w2_budget_prepare", "w2_budget",
-          "w2_answer_prepare", "w2_answer")
+          "w2_answer_prepare", "w2_answer", "w3_candidates_prepare", "w3_candidates")
 STATES = ("running", "done", "failed", "blocked", "stalled")
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "outputs" / "wiki_rsi"
@@ -169,7 +169,7 @@ def board_runs(root, now, limit=20, legacy_root=None):
                     metrics={key: value for key, value in row["metrics"].items()
                              if key in {"hotpotqa", "2wikimultihopqa", "wall_seconds",
                                         "hotpotqa_added", "2wikimultihopqa_added",
-                                        "queries", "inference_gpus", "legacy_proposals",
+                                        "queries", "inference_gpus", "legacy_proposals", "corpus_rows",
                                         "generated_tokens", "prompt_tokens", "valid_triplets", "completion_jobs"}
                              and isinstance(value, (int, float))})
             runs.append(run_view(directory.name, data["updated_at"], phases))

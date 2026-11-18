@@ -1,6 +1,6 @@
 # Wikipedia RSI 首轮输入审计厂内指南
 
-当前厂内执行入口为 [W2b 真实检索返回的冻结作答](RSI_wikipedia_W2b.md)。此页保留首次 W0 的复现方式。家服执行后续阶段时使用[家服启动指南](../RSI_wikipedia_home.md)。
+当前厂内执行入口为 [W3a 候选查询筛查](RSI_wikipedia_W3_candidates.md)。此页保留首次 W0 的复现方式。家服执行后续阶段时使用[家服启动指南](../RSI_wikipedia_home.md)。
 
 当前只运行 W0。沿用原 P0 的 Dr. Zero 工作目录、评测轨迹、数据文件和原 Python 环境。脚本用 CPU 读取原文件，不启动 vLLM 或检索服务，也无需变动现有训练。
 

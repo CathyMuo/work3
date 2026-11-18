@@ -374,9 +374,11 @@ const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", prefligh
   smoke:"GPU 冒烟", replay:"W1 完整回放", w2a_prepare:"W2a 准备", w2a:"W2a 单查询取证",
   w2_contract_prepare:"查询归因准备", w2_contract:"查询格式与取证诊断",
   w2_budget_prepare:"预算与线索准备", w2_budget:"预算与线索对照",
-  w2_answer_prepare:"实际检索返回准备", w2_answer:"真实返回冻结作答"};
+  w2_answer_prepare:"实际检索返回准备", w2_answer:"真实返回冻结作答",
+  w3_candidates_prepare:"独立页面样本与候选准备", w3_candidates:"候选单查询筛查"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
+  scanning_title_catalog:"核对原 Wikipedia 语料的可见标题",
   checking_history:"检查对话边界和证据对照", checking_checkpoint:"校验权重散列",
   loading_solver:"加载第三轮解题器", generating:"生成并评分",
   checking_retriever:"复查原 P0 检索服务", querying_wikipedia:"查询固定 Wikipedia 索引",
@@ -392,6 +394,7 @@ const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   "2wikimultihopqa_added":"2Wiki 缓存新增候选", valid_triplets:"三臂格式均有效",
   completion_jobs:"生成请求", queries:"已执行检索查询", inference_gpus:"推理用卡",
   legacy_proposals:"已生成旧提示查询",
+  corpus_rows:"已扫描语料行数",
   generated_tokens:"生成 token", prompt_tokens:"输入 token", wall_seconds:"运行秒数"};
 
 function renderWiki(target, runs, title) {
