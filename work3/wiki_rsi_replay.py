@@ -28,6 +28,7 @@ from work3.p0_retrieval_diag import (
     revision, test_questions, trace_of,
 )
 from work3.wiki_rsi_progress import Progress, atomic_json, progress_root
+from work3.wiki_rsi_references import WIKI_RSI_REFERENCES
 
 PIN = "98c4a6dd2495e85d8b4d947ab4c030e540c922c5"
 PROTOCOL = "wiki_rsi_w1_v1"
@@ -553,7 +554,7 @@ def main(argv=None):
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
     parser.add_argument("--test-parquet", type=Path, default=os.environ.get("P0_TEST_PARQUET"))
     parser.add_argument("--model-dir", type=Path, default=os.environ.get("P0_ITER3_MODEL"))
-    parser.add_argument("--references", type=Path, default=ROOT / "research/data/evidence_dev_v1.json.gz")
+    parser.add_argument("--references", type=Path, default=WIKI_RSI_REFERENCES)
     parser.add_argument("--tp", type=int, choices=(1, 2, 4), default=1)
     parser.add_argument("--gpu-memory", type=float, default=0.70)
     args = parser.parse_args(argv)
