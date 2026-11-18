@@ -1,11 +1,32 @@
 import unittest
+from unittest.mock import patch
 
 from work3.wiki_rsi_w2 import Retriever, check_anchors, measure, parse_query
 from work3.wiki_rsi_w2_contract import compatible_query, title_cue
 from work3.wiki_rsi_w2_budget import matching_title
+from work3.wiki_rsi_w2_answer import ranked_prefix, summarize as summarize_answers
 
 
 class WikiW2Test(unittest.TestCase):
+    def test_real_retrieval_keeps_rank_order_under_context_budget(self):
+        docs = [("First", "irrelevant"), ("Second", "too long"), ("Third", "missing fact")]
+        with patch("work3.wiki_rsi_w2_answer.w1.with_passages",
+                   side_effect=lambda tok, prefix, articles: [1] * (2000 * len(articles))):
+            result, prompt = ranked_prefix(None, [], docs, [1])
+        self.assertEqual(result, docs[:1])
+        self.assertEqual(len(prompt), 2000)
+
+    def test_answer_summary_keeps_unmatched_cases_in_other_comparisons(self):
+        def arm(value):
+            return {"correct": value, "valid": True, "p0_em": value}
+
+        row = {"dataset": "hotpotqa", "w1_rescued": True,
+               "coverage": {"title_query": {"all_missing_facts": True}},
+               "arms": {"empty": arm(0), "original_query": arm(0), "title_query": arm(1)}}
+        results = summarize_answers([row])["hotpotqa"]
+        self.assertEqual(results["title_vs_empty"]["strict_em"]["wins"], 1)
+        self.assertEqual(results["title_vs_matched_irrelevant"]["strict_em"]["n"], 0)
+
     def test_budget_title_control_excludes_visible_support_and_answer(self):
         lengths = {name: 3 for name in ("target page", "given town", "support page",
                                          "lakeside paris", "old forest")}

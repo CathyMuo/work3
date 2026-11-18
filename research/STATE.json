@@ -2,9 +2,9 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-18",
-  "current_stage": "W2 · 生成预算与目标线索对照",
-  "status": "查询输出诊断已完成。同输出兼容解析没有增量，原生提示在 64 token 时截断 52/115，取齐缺句 5/115。索引标题诊断取齐 93/115。",
-  "next_action": "单查询预算固定，比较同原生提示的 64 与 192 token，并在 192 下对比目标标题和长度匹配的其他标题。先定位生成完成与证据目标选择的瓶颈。",
+  "current_stage": "W2b · 真实检索返回的冻结作答",
+  "status": "192 token 消除 49 次重跑截断，但完整取证 6/115 降到 5/115。给模型标题后取齐 5/114；直接把标题作为查询此前取齐 93/115。",
+  "next_action": "按冻结历史回放真实 top-3，比较标题诊断、原题查询、空提示和等长无关段落。先确认真实可取得的证据是否改善答案，再决定是否缩小动作空间。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -109,6 +109,6 @@
   "p1_release": "p1-r16",
   "p2_release": "p2-r16",
   "rsi_current_protocol": "research/protocols/RSI_wikipedia.md",
-  "rsi_factory_guide": "docs/factory/RSI_wikipedia_W2_budget.md",
+  "rsi_factory_guide": "docs/factory/RSI_wikipedia_W2b.md",
   "rsi_home_guide": "docs/RSI_wikipedia_home.md"
 }
