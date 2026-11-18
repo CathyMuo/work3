@@ -12,7 +12,8 @@ from pathlib import Path
 PHASES = ("audit", "prepare", "preflight", "smoke", "replay", "w2a_prepare", "w2a",
           "w2_contract_prepare", "w2_contract", "w2_budget_prepare", "w2_budget",
           "w2_answer_prepare", "w2_answer", "w3_candidates_prepare", "w3_candidates",
-          "w3_candidate_audit_prepare", "w3_candidate_audit")
+          "w3_candidate_audit_prepare", "w3_candidate_audit",
+          "w3_coverage_audit_prepare", "w3_coverage_audit")
 STATES = ("running", "done", "failed", "blocked", "stalled")
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "outputs" / "wiki_rsi"
