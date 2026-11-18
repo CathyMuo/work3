@@ -315,7 +315,7 @@ def main(argv=None):
     import fcntl
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("prepare", "run"))
+    parser.add_argument("phase", choices=("prepare", "run", "contract-prepare", "contract"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -330,16 +330,22 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", args.run):
         parser.error("--run requires the original W1 run name")
-    if not args.model_dir or (args.phase == "prepare" and not args.drzero):
+    cpu_stage = args.phase in {"prepare", "contract-prepare"}
+    if not args.model_dir or (cpu_stage and not args.drzero):
         parser.error("Set P0_ITER3_MODEL and DRZERO_DIR to the original P0 paths")
-    if args.phase == "run" and (not args.retriever or not args.retriever_id):
+    if not cpu_stage and (not args.retriever or not args.retriever_id):
         parser.error("Set WIKI_RSI_RETRIEVER and WIKI_RSI_RETRIEVER_ID for the original P0 service")
     if not 0 < args.gpu_memory < 1:
         parser.error("--gpu-memory must be between zero and one")
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    phase = "w2a_prepare" if args.phase == "prepare" else "w2a"
+    if args.phase.startswith("contract"):
+        from work3 import wiki_rsi_w2_contract as contract
+
+        phase, action = ("w2_contract_prepare", contract.prepare) if cpu_stage else ("w2_contract", contract.run)
+    else:
+        phase, action = ("w2a_prepare", prepare) if cpu_stage else ("w2a", run)
     result = run_dir / f"wiki_rsi_{phase}_summary.json"
     with (run_dir / ".lock").open("a") as lock:
         try:
@@ -351,7 +357,7 @@ def main(argv=None):
         progress = Progress(run_dir, phase)
         progress.update("running", detail="checking_inputs")
         try:
-            return (prepare if args.phase == "prepare" else run)(args, run_dir, progress)
+            return action(args, run_dir, progress)
         except (Exception, KeyboardInterrupt) as error:
             row = progress.data["phases"][phase]
             progress.update("failed", row["done"], row["total"], detail=type(error).__name__)

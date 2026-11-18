@@ -1,9 +1,29 @@
 import unittest
 
 from work3.wiki_rsi_w2 import Retriever, check_anchors, measure, parse_query
+from work3.wiki_rsi_w2_contract import compatible_query, title_cue
 
 
 class WikiW2Test(unittest.TestCase):
+    def test_compatible_parser_recovers_only_one_explicit_search(self):
+        call = '<tool_call>{"name":"search","arguments":{"query_list":["river town"]}}</tool_call>'
+        self.assertEqual(compatible_query("<think>Need to look up the town.</think>" + call, "stop"),
+                         ("river town", "native_search"))
+        self.assertEqual(compatible_query("<think>Need to look up the town.</think><query>river town</query>", "stop"),
+                         ("river town", "query_after_think"))
+        self.assertEqual(compatible_query(call + call, "stop")[0], None)
+        self.assertIsNone(compatible_query(call.replace('["river town"]', '["river", "town"]'), "stop")[0])
+        self.assertIsNone(compatible_query(call.replace('"search"', '"answer"'), "stop")[0])
+        self.assertIsNone(compatible_query(call + " extra", "stop")[0])
+        self.assertIsNone(compatible_query(call, "length")[0])
+
+    def test_literal_cue_comes_from_original_question_or_passages(self):
+        self.assertEqual(title_cue("Who worked there?", [("source", "moved to river town")], "river town"),
+                         "returned_passage")
+        self.assertEqual(title_cue("Who left River Town?", [], "river town"), "question")
+        self.assertEqual(title_cue("Which plant grew there?", [("other", "we moved to riverside")], "river"),
+                         "no_literal_cue")
+
     def test_query_parser_accepts_one_stopped_query(self):
         self.assertEqual(parse_query(" <query>River history</query>\n", "stop"), "River history")
         self.assertIsNone(parse_query("<query>River\nhistory</query>", "stop"))

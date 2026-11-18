@@ -5,7 +5,8 @@ import os
 import time
 from pathlib import Path
 
-PHASES = ("audit", "prepare", "preflight", "smoke", "replay", "w2a_prepare", "w2a")
+PHASES = ("audit", "prepare", "preflight", "smoke", "replay", "w2a_prepare", "w2a",
+          "w2_contract_prepare", "w2_contract")
 STATES = ("running", "done", "failed", "blocked", "stalled")
 DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "outputs" / "wiki_rsi"
 

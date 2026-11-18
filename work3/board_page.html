@@ -370,7 +370,8 @@ async function loadBriefing() {
 }
 
 const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", preflight:"W1 启动检查",
-  smoke:"GPU 冒烟", replay:"W1 完整回放", w2a_prepare:"W2a 准备", w2a:"W2a 单查询取证"};
+  smoke:"GPU 冒烟", replay:"W1 完整回放", w2a_prepare:"W2a 准备", w2a:"W2a 单查询取证",
+  w2_contract_prepare:"查询归因准备", w2_contract:"查询格式与取证诊断"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   checking_history:"检查对话边界和证据对照", checking_checkpoint:"校验权重散列",

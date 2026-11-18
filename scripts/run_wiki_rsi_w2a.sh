@@ -3,15 +3,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 case "${1:-}" in
-  prepare)
+  prepare|contract-prepare)
     export CUDA_VISIBLE_DEVICES="" OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
     python="${DIAG_PYTHON:-python}"
     ;;
-  run)
+  run|contract)
     python="${REPLAY_PYTHON:-python}"
     ;;
   *)
-    printf '%s\n' "Usage: bash scripts/run_wiki_rsi_w2a.sh {prepare|run} --run NAME" >&2
+    printf '%s\n' "Usage: bash scripts/run_wiki_rsi_w2a.sh {prepare|run|contract-prepare|contract} --run NAME" >&2
     exit 2
     ;;
 esac

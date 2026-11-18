@@ -2,7 +2,7 @@
 
 依次执行 W0 输入审计、W1 历史重建、GPU 冒烟和完整回放。使用原 P0 第 3 轮冻结解题器、保存的 Wikipedia 搜索轨迹，以及两个数据集原有的支持句。无需新增人工标注或启动检索服务。
 
-反馈 #25 的 W1 已完成。现有逐题产物在厂内，当前使用 [W2a 单查询取证指南](factory/RSI_wikipedia_W2a.md)。下文保留 W0–W1 的重现实验步骤。
+反馈 #26 的 W2a 已完成。现有逐题产物在厂内，当前使用 [W2 查询输出与证据取向诊断](factory/RSI_wikipedia_W2_query_contract.md)。下文保留 W0–W1 的重现实验步骤。
 
 如需从原始文件重建 W0c，按 [跨轮缓存审计](factory/RSI_wikipedia_W0c.md) 给 audit 传原 W0b 汇总及第 0–2 轮合并缓存根目录，prepare 复用同一缓存根目录。家服执行前核验迁移输入的 SHA-256。
 
