@@ -2,9 +2,9 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-18",
-  "current_stage": "W1 · 单卡同历史证据回放",
-  "status": "厂内 W0c 和 CPU 历史重建均通过。56 道 HotpotQA、59 道 2Wiki 缺证据配对题以及 59 道证据齐全对照题已冻结。真实 GPU 回放待运行。",
-  "next_action": "复用原准备文件与 P0 第 3 轮 3B 检查点，先做启动检查与单卡四题冒烟，再完整回放 174 道题、578 次生成。",
+  "current_stage": "W2a · 原索引单查询取证",
+  "status": "W1 完成。真证据相对等长无关段落的配对 EM 提升为 HotpotQA +26.8、2Wiki +33.9 个百分点；各有 12 道证据特异救回。结果适用于缓存可定位的 W1 子集。",
+  "next_action": "复用 115 道 W1 配对状态。检验一次原索引查询的精确缺句命中，对照原题查询和已知支持页标题查询。实际结果再决定是否做 W2b 作答回放。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -109,6 +109,6 @@
   "p1_release": "p1-r16",
   "p2_release": "p2-r16",
   "rsi_current_protocol": "research/protocols/RSI_wikipedia.md",
-  "rsi_factory_guide": "docs/factory/RSI_wikipedia_W1.md",
+  "rsi_factory_guide": "docs/factory/RSI_wikipedia_W2a.md",
   "rsi_home_guide": "docs/RSI_wikipedia_home.md"
 }
