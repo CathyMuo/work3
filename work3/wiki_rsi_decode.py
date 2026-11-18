@@ -36,6 +36,8 @@ class DecodeEngine:
         from vllm import LLM, SamplingParams
 
         self.max_tokens = profile["max_new_tokens"]
+        self.temperature = profile["temperature"]
+        self.sampling = SamplingParams
         self.engine = LLM(
             model=str(model_dir), tensor_parallel_size=profile["tensor_parallel_size"],
             max_model_len=profile["max_model_len"], dtype=profile["dtype"], seed=profile["seed"],
@@ -45,16 +47,19 @@ class DecodeEngine:
         self.params = SamplingParams(temperature=profile["temperature"], max_tokens=self.max_tokens,
                                      skip_special_tokens=True)
 
-    def generate(self, token_batches):
+    def generate(self, token_batches, max_tokens=None):
+        limit = self.max_tokens if max_tokens is None else max_tokens
+        params = self.params if limit == self.max_tokens else self.sampling(
+            temperature=self.temperature, max_tokens=limit, skip_special_tokens=True)
         prompts = [{"prompt_token_ids": ids} for ids in token_batches]
-        responses = self.engine.generate(prompts, sampling_params=self.params, use_tqdm=False)
+        responses = self.engine.generate(prompts, sampling_params=params, use_tqdm=False)
         records = []
         for prompt, response in zip(prompts, responses, strict=True):
             if list(response.prompt_token_ids) != prompt["prompt_token_ids"] or len(response.outputs) != 1:
                 raise RuntimeError("Prompt or completion count changed in vLLM")
             completion = response.outputs[0]
             length = len(completion.token_ids)
-            if length > self.max_tokens or completion.finish_reason not in {"stop", "length"}:
+            if length > limit or completion.finish_reason not in {"stop", "length"}:
                 raise RuntimeError("Query generation did not respect the fixed token budget")
             records.append({"text": completion.text, "finish": completion.finish_reason, "tokens": length})
         return records
@@ -117,7 +122,7 @@ class NativeReplicas:
 
 
 @contextmanager
-def native_replicas(run_dir, devices, batches, model_dir, profile):
+def native_replicas(run_dir, devices, batches, model_dir, profile, *, log_stem="w2_contract_native_gpu"):
     replicas = NativeReplicas()
     with TemporaryDirectory(prefix=".decode-", dir=run_dir) as temporary:
         scratch = Path(temporary)
@@ -128,7 +133,7 @@ def native_replicas(run_dir, devices, batches, model_dir, profile):
                     continue
                 job = scratch / f"gpu{device}.json"
                 output = scratch / f"gpu{device}_out.json"
-                log = run_dir / f"w2_contract_native_gpu{device}.log"
+                log = run_dir / f"{log_stem}{device}.log"
                 atomic_json(job, {
                     "model_dir": str(model_dir), "profile": {**profile, "cuda_visible_devices": device},
                     "batches": [(index, batches[index]) for index in assigned],

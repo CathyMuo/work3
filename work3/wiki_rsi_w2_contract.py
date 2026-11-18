@@ -205,6 +205,7 @@ def decode_batches(args, run_dir, progress, batches, profile, devices):
                 native_seconds += time.monotonic() - before
             issued += len(batch)
             progress.update("running", 0, total, detail="generating_queries",
+                            dataset=batch[-1]["dataset"],
                             metrics={**metrics, "legacy_proposals": issued})
         native_reports = {}
         if devices:
@@ -283,6 +284,7 @@ def run(args, run_dir, progress):
         physical_queries += len(lookups)
         rows.extend(chunk)
         progress.update("running", len(rows), len(cases), detail="querying_wikipedia",
+                        dataset=batch[-1]["dataset"],
                         metrics={"generated_tokens": generated_tokens, "queries": physical_queries,
                                  "inference_gpus": gpu_count})
     timings["retrieval_and_scoring_seconds"] = round(time.monotonic() - retrieval_started, 3)

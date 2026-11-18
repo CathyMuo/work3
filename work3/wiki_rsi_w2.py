@@ -297,6 +297,7 @@ def run(args, run_dir, progress):
             records.append({key: case[key] for key in ("dataset", "qid", "w1_rescued",
                                                        "earliest_source_iteration")} | {"arms": results})
         progress.update("running", len(records), len(cases), detail="querying_wikipedia",
+                        dataset=batch[-1]["dataset"],
                         metrics={"generated_tokens": generated_tokens})
     atomic_json(run_dir / "w2a_cases.json", {"protocol": PROTOCOL, "records": records})
     summary = {"protocol": PROTOCOL, "repo_revision": revision(ROOT), "preparation_sha256": sha256(report_path),
@@ -315,7 +316,7 @@ def main(argv=None):
     import fcntl
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("prepare", "run", "contract-prepare", "contract"))
+    parser.add_argument("phase", choices=("prepare", "run", "contract-prepare", "contract", "budget-prepare", "budget"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -329,11 +330,11 @@ def main(argv=None):
     parser.add_argument("--native-gpus", help="optional additional GPU indices for the native-query arm")
     parser.set_defaults(tp=1)
     args = parser.parse_args(argv)
-    if args.native_gpus is not None and args.phase != "contract":
-        parser.error("--native-gpus applies to the contract phase")
+    if args.native_gpus is not None and args.phase not in {"contract", "budget"}:
+        parser.error("--native-gpus applies to the contract and budget phases")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", args.run):
         parser.error("--run requires the original W1 run name")
-    cpu_stage = args.phase in {"prepare", "contract-prepare"}
+    cpu_stage = args.phase in {"prepare", "contract-prepare", "budget-prepare"}
     if not args.model_dir or (cpu_stage and not args.drzero):
         parser.error("Set P0_ITER3_MODEL and DRZERO_DIR to the original P0 paths")
     if not cpu_stage and (not args.retriever or not args.retriever_id):
@@ -343,7 +344,11 @@ def main(argv=None):
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase.startswith("contract"):
+    if args.phase.startswith("budget"):
+        from work3 import wiki_rsi_w2_budget as budget
+
+        phase, action = ("w2_budget_prepare", budget.prepare) if cpu_stage else ("w2_budget", budget.run)
+    elif args.phase.startswith("contract"):
         from work3 import wiki_rsi_w2_contract as contract
 
         phase, action = ("w2_contract_prepare", contract.prepare) if cpu_stage else ("w2_contract", contract.run)
@@ -360,7 +365,8 @@ def main(argv=None):
         progress = Progress(run_dir, phase)
         progress.update("running", detail="checking_inputs")
         try:
-            return action(args, run_dir, progress)
+            with progress.heartbeat():
+                return action(args, run_dir, progress)
         except (Exception, KeyboardInterrupt) as error:
             row = progress.data["phases"][phase]
             progress.update("failed", row["done"], row["total"], detail=type(error).__name__)

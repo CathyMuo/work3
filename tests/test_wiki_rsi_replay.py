@@ -61,3 +61,27 @@ class WikiReplayTest(unittest.TestCase):
             self.assertEqual(row["metrics"], {"hotpotqa": 4})
             Progress(run, "replay").update("blocked", detail="insufficient_pairs")
             self.assertEqual(set(board_runs(root, written)[0]["phases"]), {"prepare", "replay"})
+
+    def test_board_reads_old_audit_and_process_heartbeat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            active = root / "active"
+            active.mkdir()
+            progress = Progress(active, "w2_budget")
+            progress.update("running", 8, 20, detail="querying_wikipedia", dataset="hotpotqa")
+            written = progress.data["updated_at"]
+            legacy = root / "wiki_rsi_audit-20261118"
+            legacy.mkdir()
+            (legacy / "wiki_rsi_input_summary.json").write_text(json.dumps({
+                "protocol": "rsi_wikipedia_input_audit_v1", "ready_for_replay_preparation": False,
+                "provenance": {"repo_revision": "aabbccdd1122"},
+                "by_dataset": {"hotpotqa": {"selected_missing_with_source": 10},
+                               "2wikimultihopqa": {"selected_missing_with_source": 60}},
+            }), encoding="utf-8")
+            views = {run["id"]: run for run in board_runs(root, written + 59, legacy_root=root)}
+            self.assertEqual(views["active"]["phases"]["w2_budget"]["dataset"], "hotpotqa")
+            self.assertIsNone(views["active"]["finished_at"])
+            self.assertEqual(views[legacy.name]["commit"], "aabbccdd1122")
+            self.assertEqual(views[legacy.name]["phases"]["audit"]["state"], "blocked")
+            expired = next(run for run in board_runs(root, written + 61) if run["id"] == "active")
+            self.assertEqual(expired["phases"]["w2_budget"]["state"], "stalled")

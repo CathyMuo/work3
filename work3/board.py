@@ -913,6 +913,8 @@ class Board:
         self.root = root
         dz = Path(drzero_dir) if drzero_dir else None
         p0 = os.environ.get("BOARD_P0_OUT") or (str(dz / "work3_p0") if dz else None)
+        wiki_legacy = os.environ.get("BOARD_WIKI_LEGACY_ROOT") or p0
+        self.wiki_legacy = Path(wiki_legacy) if wiki_legacy else None
         p1 = os.environ.get("BOARD_P1_OUT") or (str(dz / "work3_p1") if dz else None)
         ar = Path(arm_root) if arm_root else (dz.parent / "drzero_p2" if dz else None)
         self.specs = []
@@ -1125,7 +1127,7 @@ def make_handler(board: Board):
                 elif url.path == "/api/research":
                     self.json(research(board.root))
                 elif url.path == "/api/wiki-rsi":
-                    self.json({"runs": board_runs(progress_root(), time.time())})
+                    self.json({"runs": board_runs(progress_root(), time.time(), legacy_root=board.wiki_legacy)})
                 elif url.path == "/api/briefing":
                     path = board.root / "research" / "briefing.html"
                     body = path.read_bytes() if path.exists() else "<p>research/briefing.html 不存在</p>".encode()

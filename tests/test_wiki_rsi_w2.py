@@ -2,9 +2,18 @@ import unittest
 
 from work3.wiki_rsi_w2 import Retriever, check_anchors, measure, parse_query
 from work3.wiki_rsi_w2_contract import compatible_query, title_cue
+from work3.wiki_rsi_w2_budget import matching_title
 
 
 class WikiW2Test(unittest.TestCase):
+    def test_budget_title_control_excludes_visible_support_and_answer(self):
+        lengths = {name: 3 for name in ("target page", "given town", "support page",
+                                         "lakeside paris", "old forest")}
+        lengths["much longer candidate title"] = 6
+        result = matching_title("qid", "target page", lengths, {"support page"}, lengths,
+                                "Who left this town?", [("location", "moved to given town")], ["Paris"])
+        self.assertEqual(result, ["old forest"])
+
     def test_compatible_parser_recovers_only_one_explicit_search(self):
         call = '<tool_call>{"name":"search","arguments":{"query_list":["river town"]}}</tool_call>'
         self.assertEqual(compatible_query("<think>Need to look up the town.</think>" + call, "stop"),

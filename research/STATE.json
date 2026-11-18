@@ -2,9 +2,9 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-18",
-  "current_stage": "W2 · 查询输出与证据取向诊断",
-  "status": "W2a 已完成。历史查询仅执行 25/115 次，全部缺句命中 3/115；标题诊断取齐 93/115。需区分严格解析、查询表达和历史提供的目标线索。",
-  "next_action": "固定同一状态和一条查询预算，比较原严格回放、同输出兼容解析和原生工具提示。默认单卡，小批量推理可在同规格空闲卡上并行原生提示，旧提示保留原卡。",
+  "current_stage": "W2 · 生成预算与目标线索对照",
+  "status": "查询输出诊断已完成。同输出兼容解析没有增量，原生提示在 64 token 时截断 52/115，取齐缺句 5/115。索引标题诊断取齐 93/115。",
+  "next_action": "单查询预算固定，比较同原生提示的 64 与 192 token，并在 192 下对比目标标题和长度匹配的其他标题。先定位生成完成与证据目标选择的瓶颈。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -109,6 +109,6 @@
   "p1_release": "p1-r16",
   "p2_release": "p2-r16",
   "rsi_current_protocol": "research/protocols/RSI_wikipedia.md",
-  "rsi_factory_guide": "docs/factory/RSI_wikipedia_W2_query_contract.md",
+  "rsi_factory_guide": "docs/factory/RSI_wikipedia_W2_budget.md",
   "rsi_home_guide": "docs/RSI_wikipedia_home.md"
 }

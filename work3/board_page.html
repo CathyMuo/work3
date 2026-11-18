@@ -146,11 +146,12 @@ details { border-top:1px solid var(--line); padding:8px 0 2px; margin-top:10px; 
 <body>
 <header>
   <h1>Work 3 · Wikipedia 搜索智能体</h1>
-  <nav><button id="t-live">历史运行</button> <button id="t-cur">训练曲线</button> <button id="t-brief" class="on">研究说明</button> <button id="t-res">项目记录</button></nav>
+  <nav><button id="t-live">训练运行</button> <button id="t-wiki">实验运行</button> <button id="t-cur">训练曲线</button> <button id="t-brief" class="on">研究说明</button> <button id="t-res">项目记录</button></nav>
   <span class="mute" id="upd"></span>
 </header>
 <main>
   <section id="live" hidden></section>
+  <section id="wiki" hidden><div id="wiki-history" aria-live="polite">正在读取实验运行…</div></section>
   <section id="cur" hidden>
     <div class="card">
       <div class="ctl">
@@ -371,7 +372,8 @@ async function loadBriefing() {
 
 const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", preflight:"W1 启动检查",
   smoke:"GPU 冒烟", replay:"W1 完整回放", w2a_prepare:"W2a 准备", w2a:"W2a 单查询取证",
-  w2_contract_prepare:"查询归因准备", w2_contract:"查询格式与取证诊断"};
+  w2_contract_prepare:"查询归因准备", w2_contract:"查询格式与取证诊断",
+  w2_budget_prepare:"预算与线索准备", w2_budget:"预算与线索对照"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   checking_history:"检查对话边界和证据对照", checking_checkpoint:"校验权重散列",
@@ -390,30 +392,57 @@ const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   legacy_proposals:"已生成旧提示查询",
   generated_tokens:"生成 token", prompt_tokens:"输入 token", wall_seconds:"运行秒数"};
 
-async function refreshWiki() {
-  const target = $("#wiki-progress");
+function renderWiki(target, runs, title) {
+  const opened = new Map([...target.querySelectorAll("details[data-wiki-run]")]
+    .map(detail => [detail.dataset.wikiRun, detail.open]));
+  target.innerHTML = '<div class="card"><h2>' + title + "</h2>" +
+    (runs.length ? runs.map((run, index) => {
+      const rows = Object.entries(wikiPhases).map(([key, label]) => {
+        const row = run.phases[key] || {state:"pending", metrics:{}};
+        const status = row.state === "blocked" ? "等待输入条件" :
+          row.state === "stalled" ? "⚠ 可能卡住" : STATE[row.state];
+        const units = row.total ? row.done + " / " + row.total : "—";
+        const progress = row.total ? '<br><progress aria-label="' + esc(label) + '" value="' +
+          row.done + '" max="' + row.total + '"></progress>' : "";
+        const details = Object.entries(row.metrics).map(([name, value]) =>
+          esc(wikiMetrics[name]) + " " + esc(value)).join(" · ");
+        const age = row.state === "running" && row.action_started_at ?
+          " · " + hms(Math.max(0, Date.now() / 1000 - row.action_started_at)) : "";
+        const dataset = row.dataset ? " · " +
+          (row.dataset === "hotpotqa" ? "HotpotQA" : "2WikiMultiHopQA") : "";
+        return "<tr><td>" + esc(label) + '</td><td class="' + esc(row.state) + '">' + esc(status) +
+          "</td><td>" + units + progress + "</td><td>" + esc((wikiDetails[row.detail] || "") + dataset + age) +
+          (details ? '<div class="mute">' + details + "</div>" : "") + "</td></tr>";
+      }).join("");
+      const open = opened.has(run.id) ? opened.get(run.id) : index === 0;
+      const started = run.started_at ? clock(run.started_at) : "—";
+      const ended = run.finished_at ? clock(run.finished_at) : "进行中";
+      const commit = run.commit ? " · " + run.commit.slice(0, 7) : "";
+      return '<details data-wiki-run="' + esc(run.id) + '"' + (open ? " open" : "") + "><summary>" +
+        esc(run.id) + ' <span class="mute small">' + esc(started + " → " + ended + commit) + "</span></summary>" +
+        '<table class="small"><thead><tr><th>阶段</th><th>状态</th><th>处理量</th><th>说明</th></tr></thead>' +
+        "<tbody>" + rows + "</tbody></table></details>";
+    }).join("") : '<p class="mute">此看板还没有可读的 Wikipedia 运行记录。</p>') + "</div>";
+}
+
+let wikiSignature = "";
+async function pollWiki() {
+  let next = 8000;
   try {
     const response = await fetch("/api/wiki-rsi", {cache: "no-store"});
     if (!response.ok) throw new Error(response.status);
     const {runs} = await response.json();
-    target.innerHTML = '<div class="card"><h2>家服实验进度</h2>' +
-      (runs.length ? runs.map(run => {
-        const rows = Object.entries(wikiPhases).map(([key, label]) => {
-          const row = run.phases[key] || {state:"pending", metrics:{}};
-          const status = row.state === "blocked" ? "等待输入条件" : STATE[row.state];
-          const units = row.total ? row.done + " / " + row.total : "—";
-          const details = Object.entries(row.metrics).map(([name, value]) =>
-            esc(wikiMetrics[name]) + " " + esc(value)).join(" · ");
-          return "<tr><td>" + esc(label) + '</td><td class="' + esc(row.state) + '">' + esc(status) +
-            "</td><td>" + units + "</td><td>" + esc(wikiDetails[row.detail] || "") +
-            (details ? '<div class="mute">' + details + "</div>" : "") + "</td></tr>";
-        }).join("");
-        return "<h3>" + esc(run.id) + ' <span class="mute small">' + clock(run.updated_at) + "</span></h3>" +
-          '<table class="small"><thead><tr><th>阶段</th><th>状态</th><th>处理量</th><th>说明</th></tr></thead>' +
-          "<tbody>" + rows + "</tbody></table>";
-      }).join("") : '<p class="mute">还没有启动 Wikipedia 实验。</p>') + "</div>";
+    const signature = JSON.stringify(runs);
+    if (signature !== wikiSignature) {
+      renderWiki($("#wiki-history"), runs, "Wikipedia 实验运行");
+      renderWiki($("#wiki-progress"), runs.slice(0, 1), "最近一次实验");
+      wikiSignature = signature;
+    }
+    if (runs.some(run => Object.values(run.phases).some(row => row.state === "running"))) next = 2000;
   } catch (error) {
-    target.textContent = "实验进度暂时无法读取。";
+    if (!wikiSignature) $("#wiki-history").textContent = "实验进度暂时无法读取。";
+  } finally {
+    setTimeout(pollWiki, next);
   }
 }
 
@@ -642,20 +671,20 @@ $("#c-time").onclick = () => setKeys(k => /^(timing_s|perf)\//.test(k));
 $("#c-none").onclick = () => setKeys(() => false);
 
 function show(which) {
-  for (const w of ["live", "cur", "brief", "res"]) { $("#" + w).hidden = w !== which; $("#t-" + w).classList.toggle("on", w === which); }
+  for (const w of ["live", "wiki", "cur", "brief", "res"]) { $("#" + w).hidden = w !== which; $("#t-" + w).classList.toggle("on", w === which); }
   if (which === "res") loadResearch();
-  if (which === "brief") { loadBriefing(); refreshWiki(); }
+  if (which === "brief") loadBriefing();
   if (which === "live") tick();
   if (which === "cur") { (cur.loaded ? curLoad() : curInit()); loadHistory(); }
   try { history.replaceState(null, "", "#" + which); } catch (e) {}
 }
-for (const w of ["live", "cur", "brief", "res"]) $("#t-" + w).onclick = () => show(w);
+for (const w of ["live", "wiki", "cur", "brief", "res"]) $("#t-" + w).onclick = () => show(w);
 setInterval(() => {
   if (!$("#live").hidden) tick();
-  if (!$("#brief").hidden) refreshWiki();
 }, 8000);
 const tab = location.hash.slice(1);
-show(["live", "cur", "brief", "res"].includes(tab) ? tab : "brief");
+show(["live", "wiki", "cur", "brief", "res"].includes(tab) ? tab : "brief");
+pollWiki();
 setInterval(() => { if (!$("#cur").hidden) { curLoad(); loadHistory(); } }, 15000);
 </script>
 </body>

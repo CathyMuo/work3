@@ -742,7 +742,8 @@ def main(argv=None):
                 raise ValueError("Set P0_ITER3_MODEL to the original P0 iteration-3 HF solver")
             handlers = {"audit": run_audit, "prepare": prepare, "preflight": preflight,
                         "smoke": replay, "replay": replay}
-            return handlers[args.phase](args, run_dir, progress)
+            with progress.heartbeat():
+                return handlers[args.phase](args, run_dir, progress)
         except (Exception, KeyboardInterrupt) as error:
             phase = progress.data["phases"][args.phase]
             progress.update("failed", phase["done"], phase["total"], detail=type(error).__name__)
