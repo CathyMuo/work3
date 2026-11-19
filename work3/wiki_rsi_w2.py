@@ -324,7 +324,8 @@ def main(argv=None):
                                           "repair-pool-prepare", "repair-pool", "repair-audit",
                                           "repair-answer-prepare", "repair-answer", "natural-prepare", "natural-check",
                                           "natural-query-prepare", "natural-query",
-                                          "action-pilot-prepare", "action-pilot"))
+                                          "action-pilot-prepare", "action-pilot",
+                                          "action-train-prepare", "action-train"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -358,7 +359,12 @@ def main(argv=None):
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase.startswith("action-pilot"):
+    if args.phase.startswith("action-train"):
+        from work3 import wiki_rsi_action_train as action_train
+
+        phase, action = (("w6_action_train_prepare", action_train.prepare) if cpu_stage
+                         else ("w6_action_train", action_train.run))
+    elif args.phase.startswith("action-pilot"):
         from work3 import wiki_rsi_action_pilot as action_pilot
 
         phase, action = (("w6_action_pilot_prepare", action_pilot.prepare) if cpu_stage

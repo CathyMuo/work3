@@ -3,11 +3,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 case "${1:-}" in
-  prepare|contract-prepare|budget-prepare|answer-prepare|candidates-prepare|candidates|candidate-audit-prepare|candidate-audit|coverage-audit-prepare|coverage-audit|repair-pool-prepare|repair-pool|repair-audit|repair-answer-prepare|natural-prepare|natural-check|natural-query-prepare|action-pilot-prepare|action-pilot)
+  prepare|contract-prepare|budget-prepare|answer-prepare|candidates-prepare|candidates|candidate-audit-prepare|candidate-audit|coverage-audit-prepare|coverage-audit|repair-pool-prepare|repair-pool|repair-audit|repair-answer-prepare|natural-prepare|natural-check|natural-query-prepare|action-pilot-prepare|action-pilot|action-train-prepare)
     export CUDA_VISIBLE_DEVICES="" OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
     python="${DIAG_PYTHON:-python}"
     ;;
-  run|contract|budget|answer|repair-answer|natural-query)
+  run|contract|budget|answer|repair-answer|natural-query|action-train)
     python="${REPLAY_PYTHON:-python}"
     ;;
   *)
