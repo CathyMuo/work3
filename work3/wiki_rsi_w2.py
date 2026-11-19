@@ -321,7 +321,7 @@ def main(argv=None):
                                           "candidates-prepare", "candidates",
                                           "candidate-audit-prepare", "candidate-audit",
                                           "coverage-audit-prepare", "coverage-audit",
-                                          "repair-pool-prepare", "repair-pool"))
+                                          "repair-pool-prepare", "repair-pool", "repair-audit"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -342,7 +342,7 @@ def main(argv=None):
         parser.error("--run requires the original W1 run name")
     cpu_stage = args.phase == "prepare" or args.phase.endswith("-prepare")
     no_model = {"candidates", "candidate-audit", "candidate-audit-prepare",
-                "coverage-audit", "coverage-audit-prepare", "repair-pool", "repair-pool-prepare"}
+                "coverage-audit", "coverage-audit-prepare", "repair-pool", "repair-pool-prepare", "repair-audit"}
     if args.phase not in no_model and not args.model_dir:
         parser.error("Set P0_ITER3_MODEL to the original P0 model")
     if cpu_stage and not args.drzero:
@@ -354,7 +354,11 @@ def main(argv=None):
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase.startswith("repair-pool"):
+    if args.phase == "repair-audit":
+        from work3 import wiki_rsi_repair_audit as repair_audit
+
+        phase, action = "w4_repair_audit", repair_audit.run
+    elif args.phase.startswith("repair-pool"):
         from work3 import wiki_rsi_repair_pool as repair
 
         phase, action = (("w4_repair_pool_prepare", repair.prepare) if cpu_stage
