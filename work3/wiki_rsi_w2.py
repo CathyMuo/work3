@@ -322,7 +322,8 @@ def main(argv=None):
                                           "candidate-audit-prepare", "candidate-audit",
                                           "coverage-audit-prepare", "coverage-audit",
                                           "repair-pool-prepare", "repair-pool", "repair-audit",
-                                          "repair-answer-prepare", "repair-answer", "natural-prepare", "natural-check"))
+                                          "repair-answer-prepare", "repair-answer", "natural-prepare", "natural-check",
+                                          "natural-query-prepare", "natural-query"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -356,7 +357,12 @@ def main(argv=None):
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase.startswith("natural-"):
+    if args.phase.startswith("natural-query"):
+        from work3 import wiki_rsi_natural_query as natural_query
+
+        phase, action = (("w5_natural_query_prepare", natural_query.prepare) if cpu_stage
+                         else ("w5_natural_query", natural_query.run))
+    elif args.phase.startswith("natural-"):
         from work3 import wiki_rsi_natural as natural
 
         phase, action = (("w5_natural_prepare", natural.prepare) if cpu_stage

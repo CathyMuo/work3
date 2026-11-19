@@ -381,7 +381,8 @@ const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", prefligh
   w4_repair_pool_prepare:"W4a 构造可修复状态", w4_repair_pool:"W4a 验证真实检索动作",
   w4_repair_audit:"W4b 人物证据与筛选条件审计",
   w4_repair_answer_prepare:"W4c 冻结作答准备", w4_repair_answer:"W4c 五臂同题作答回放",
-  w5_natural_prepare:"W5a 冻结独立支持页的自然题", w5_natural:"W5a 自然题单查询检验"};
+  w5_natural_prepare:"W5a 冻结独立支持页的自然题", w5_natural:"W5a 自然题单查询检验",
+  w5_natural_query_prepare:"W5b 冻结查询提示准备", w5_natural_query:"W5b 单次自由查询与取证"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   scanning_title_catalog:"核对原 Wikipedia 语料的可见标题",
@@ -391,6 +392,7 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   verifying_repair_actions:"核对正负动作的真实返回",
   scanning_repair_people:"核对已查人物在原语料中的标题与出生证据",
   preparing_repair_answers:"核验页面拆分并冻结五组提示",
+  preparing_natural_query:"核验 W5a 结果并准备可见历史提示",
   checking_history:"检查对话边界和证据对照", checking_checkpoint:"校验权重散列",
   loading_solver:"加载第三轮解题器", generating:"生成并评分",
   checking_retriever:"复查原 P0 检索服务", querying_wikipedia:"查询固定 Wikipedia 索引",
