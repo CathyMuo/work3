@@ -15,7 +15,7 @@ PHASES = ("audit", "prepare", "preflight", "smoke", "replay", "w2a_prepare", "w2
           "w3_candidate_audit_prepare", "w3_candidate_audit",
           "w3_coverage_audit_prepare", "w3_coverage_audit",
           "w4_repair_pool_prepare", "w4_repair_pool", "w4_repair_audit",
-          "w4_repair_answer_prepare", "w4_repair_answer")
+          "w4_repair_answer_prepare", "w4_repair_answer", "w5_natural_prepare", "w5_natural")
 STATES = ("running", "done", "failed", "blocked", "stalled")
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "outputs" / "wiki_rsi"

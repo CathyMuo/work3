@@ -151,7 +151,7 @@ def build_pool(dump, tests, refs, blocked_pages):
     return pool, counts
 
 
-def choose_states(tok, test, pool, counts, blocked_pages):
+def choose_states(tok, test, pool, counts, blocked_pages, *, limit=LIMIT):
     wanted = {(ds, row[0]) for ds, records in pool.items() for row in records}
     initial = w1.initial_messages(test, wanted)
     used = set(blocked_pages)
@@ -159,7 +159,7 @@ def choose_states(tok, test, pool, counts, blocked_pages):
     for ds, records in pool.items():
         stats = counts[ds]
         for qid, row, pages, gap, visible in records:
-            if stats["selected"] == LIMIT:
+            if stats["selected"] == limit:
                 break
             if pages & used:
                 stats["overlaps_selected_pages"] += 1
