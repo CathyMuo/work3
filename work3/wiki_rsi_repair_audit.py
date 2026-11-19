@@ -103,7 +103,7 @@ def scan_people(corpus, names, progress):
     return by_title, digest.hexdigest(), rows
 
 
-def candidates(source, prefix, people, returns, evidence, mode):
+def candidates(source, prefix, people, returns, evidence, mode, *, work_kind="film"):
     parser = "strict" if mode.startswith("strict") else "normalized"
     paired = mode.endswith("paired")
     stages = set()
@@ -115,7 +115,7 @@ def candidates(source, prefix, people, returns, evidence, mode):
             continue
         stages.add("source_with_positive")
         year, witness = positive
-        question = f"What year was the {role} of the film {source} born?"
+        question = f"What year was the {role} of the {work_kind} {source} born?"
         normalized_question = text_key(question)
         if (w4.has_year(prefix, year) or contains(normalized_question, year)
                 or contains(normalized_question, text_key(target))):

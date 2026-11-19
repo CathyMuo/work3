@@ -58,12 +58,15 @@ def trainable(adapters):
     return [weight for adapter in adapters for weight in (adapter.down, adapter.up)]
 
 
-def scheduled_indices(n):
-    rng = random.Random(SEED)
-    order = []
-    for _ in range(EPOCHS):
+def scheduled_indices(n, *, epochs=EPOCHS, seed=SEED, checkpoints=()):
+    rng = random.Random(seed)
+    order, schedule = [], []
+    for epoch in range(1, epochs + 1):
         order.extend(rng.sample(range(n), n))
-    return [order[start:start + ACCUMULATION] for start in range(0, len(order), ACCUMULATION)]
+        if epoch == epochs or epoch in checkpoints:
+            schedule.extend(order[start:start + ACCUMULATION] for start in range(0, len(order), ACCUMULATION))
+            order.clear()
+    return schedule
 
 
 def mean_logprobs(model, prompt, completions, pad, device):
@@ -88,12 +91,14 @@ def objectives(mean_logp, frozen_margin):
     return sft, sft + PAIR_WEIGHT * preference
 
 
-def train_arm(model, adapters, rows, margins, pad, device, *, paired, progress):
+def train_arm(model, adapters, rows, margins, pad, device, *, paired, progress,
+              epochs=EPOCHS, seed=SEED, checkpoints=(), on_checkpoint=None):
     model.train()
     params = trainable(adapters)
     optimizer = torch.optim.AdamW(params, lr=LEARNING_RATE, weight_decay=0)
-    schedule = scheduled_indices(len(rows))
+    schedule = scheduled_indices(len(rows), epochs=epochs, seed=seed, checkpoints=checkpoints)
     losses = []
+    seen, consumed = 0, 0
     for step, group in enumerate(schedule, 1):
         total = torch.zeros((), device=device)
         for index in group:
@@ -104,15 +109,21 @@ def train_arm(model, adapters, rows, margins, pad, device, *, paired, progress):
             loss = paired_loss if paired else positive_loss + paired_loss * 0.0
             (loss / len(group)).backward()
             total += loss.detach()
+            consumed += 2 * len(row["prompt"]) + len(row["positive"]) + len(row["negative"])
         if not torch.isfinite(total).item():
             raise RuntimeError("Non-finite independent pilot loss")
         torch.nn.utils.clip_grad_norm_(params, 1.0, error_if_nonfinite=True)
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
         losses.append(round(total.item() / len(group), 6))
+        seen += len(group)
         progress(step, len(schedule))
-    consumed = EPOCHS * sum(2 * len(row["prompt"]) + len(row["positive"]) + len(row["negative"]) for row in rows)
-    return {"steps": len(schedule), "pair_presentations": EPOCHS * len(rows), "unpadded_input_tokens": consumed,
+        epoch, rest = divmod(seen, len(rows))
+        if on_checkpoint and not rest and epoch in checkpoints:
+            on_checkpoint(epoch, {"steps": step, "pair_presentations": seen, "unpadded_input_tokens": consumed,
+                                  "first_loss": losses[0], "last_loss": losses[-1]})
+            model.train()
+    return {"steps": len(schedule), "pair_presentations": seen, "unpadded_input_tokens": consumed,
             "first_loss": losses[0], "last_loss": losses[-1]}
 
 

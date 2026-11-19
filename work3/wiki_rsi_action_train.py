@@ -82,27 +82,27 @@ def prior_inputs(run_dir):
     return frozen, training
 
 
-def prepare(args, run_dir, progress):
-    from transformers import AutoTokenizer
-
-    frozen, training = prior_inputs(run_dir)
-    checkpoint = w1.read_json(run_dir / "wiki_rsi_prepare_summary.json")
-    w1.verify_checkpoint(args, checkpoint)
-    tok = AutoTokenizer.from_pretrained(str(args.model_dir), local_files_only=True)
+def encode_pair(tok, row):
     eos = tok.eos_token_id
     if eos is None:
         raise ValueError("Expected an end-of-sequence token in the original tokenizer")
+    ids = w5b.prompt_ids(tok, row["question"], row["visible"])
+    pair = {key: tok(row[f"{key}_query"], add_special_tokens=False)["input_ids"] + [eos]
+            for key in ("positive", "negative")}
+    if not ids or any(not 1 < len(seq) <= w5b.MAX_NEW or len(ids) + len(seq) > w1.solver.MAX_MODEL_LEN
+                      for seq in pair.values()):
+        return None
+    return {"prompt": ids, **pair}
+
+
+def encode_inputs(tok, training, cases, progress):
     train_rows = []
     for row in training:
-        ids = w5b.prompt_ids(tok, row["question"], row["visible"])
-        pair = {key: tok(row[f"{key}_query"], add_special_tokens=False)["input_ids"] + [eos]
-                for key in ("positive", "negative")}
-        if not ids or any(not 1 < len(seq) <= w5b.MAX_NEW or len(ids) + len(seq) > w1.solver.MAX_MODEL_LEN
-                          for seq in pair.values()):
+        encoded = encode_pair(tok, row)
+        if encoded is None:
             raise ValueError("A verified action pair does not fit the fixed token budget")
-        train_rows.append({"prompt": ids, **pair})
+        train_rows.append(encoded)
     eval_rows, overflows = [], Counter()
-    cases = frozen["evaluation"]
     for index, case in enumerate(cases, 1):
         ids = w5b.prompt_ids(tok, case["question"], case["visible"])
         overflow = len(ids) + w5b.MAX_NEW + 1 > w1.solver.MAX_MODEL_LEN
@@ -110,6 +110,18 @@ def prepare(args, run_dir, progress):
         eval_rows.append({key: case[key] for key in ("dataset", "qid", "title_stratum", "missing_facts")}
                          | {"ids": None if overflow else ids})
         progress.update("running", index, len(cases), detail="preparing_action_training")
+    return train_rows, eval_rows, overflows
+
+
+def prepare(args, run_dir, progress):
+    from transformers import AutoTokenizer
+
+    frozen, training = prior_inputs(run_dir)
+    checkpoint = w1.read_json(run_dir / "wiki_rsi_prepare_summary.json")
+    w1.verify_checkpoint(args, checkpoint)
+    tok = AutoTokenizer.from_pretrained(str(args.model_dir), local_files_only=True)
+    cases = frozen["evaluation"]
+    train_rows, eval_rows, overflows = encode_inputs(tok, training, cases, progress)
     path = run_dir / PREPARED
     atomic_json(path, {"protocol": PROTOCOL, "train": train_rows, "evaluation": eval_rows,
                        "retriever_id": frozen["retriever_id"], "anchors": frozen["anchors"]})
