@@ -321,7 +321,8 @@ def main(argv=None):
                                           "candidates-prepare", "candidates",
                                           "candidate-audit-prepare", "candidate-audit",
                                           "coverage-audit-prepare", "coverage-audit",
-                                          "repair-pool-prepare", "repair-pool", "repair-audit"))
+                                          "repair-pool-prepare", "repair-pool", "repair-audit",
+                                          "repair-answer-prepare", "repair-answer"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -347,14 +348,19 @@ def main(argv=None):
         parser.error("Set P0_ITER3_MODEL to the original P0 model")
     if cpu_stage and not args.drzero:
         parser.error("Set DRZERO_DIR to the original Dr. Zero checkout")
-    if not cpu_stage and args.phase != "answer" and (not args.retriever or not args.retriever_id):
+    if not cpu_stage and args.phase not in {"answer", "repair-answer"} and (not args.retriever or not args.retriever_id):
         parser.error("Set WIKI_RSI_RETRIEVER and WIKI_RSI_RETRIEVER_ID for the original P0 service")
     if not 0 < args.gpu_memory < 1:
         parser.error("--gpu-memory must be between zero and one")
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase == "repair-audit":
+    if args.phase.startswith("repair-answer"):
+        from work3 import wiki_rsi_repair_answer as repair_answer
+
+        phase, action = (("w4_repair_answer_prepare", repair_answer.prepare) if cpu_stage
+                         else ("w4_repair_answer", repair_answer.run))
+    elif args.phase == "repair-audit":
         from work3 import wiki_rsi_repair_audit as repair_audit
 
         phase, action = "w4_repair_audit", repair_audit.run
