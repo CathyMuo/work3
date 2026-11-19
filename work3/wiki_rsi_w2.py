@@ -323,7 +323,8 @@ def main(argv=None):
                                           "coverage-audit-prepare", "coverage-audit",
                                           "repair-pool-prepare", "repair-pool", "repair-audit",
                                           "repair-answer-prepare", "repair-answer", "natural-prepare", "natural-check",
-                                          "natural-query-prepare", "natural-query"))
+                                          "natural-query-prepare", "natural-query",
+                                          "action-pilot-prepare", "action-pilot"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -345,7 +346,7 @@ def main(argv=None):
     cpu_stage = args.phase == "prepare" or args.phase.endswith("-prepare")
     no_model = {"candidates", "candidate-audit", "candidate-audit-prepare",
                 "coverage-audit", "coverage-audit-prepare", "repair-pool", "repair-pool-prepare", "repair-audit",
-                "natural-check"}
+                "natural-check", "action-pilot"}
     if args.phase not in no_model and not args.model_dir:
         parser.error("Set P0_ITER3_MODEL to the original P0 model")
     if cpu_stage and not args.drzero:
@@ -357,7 +358,12 @@ def main(argv=None):
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase.startswith("natural-query"):
+    if args.phase.startswith("action-pilot"):
+        from work3 import wiki_rsi_action_pilot as action_pilot
+
+        phase, action = (("w6_action_pilot_prepare", action_pilot.prepare) if cpu_stage
+                         else ("w6_action_pilot", action_pilot.run))
+    elif args.phase.startswith("natural-query"):
         from work3 import wiki_rsi_natural_query as natural_query
 
         phase, action = (("w5_natural_query_prepare", natural_query.prepare) if cpu_stage
