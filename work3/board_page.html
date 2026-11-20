@@ -390,7 +390,8 @@ const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", prefligh
   w7_live_prepare:"W7b 锁定新支持页", w7_live:"W7b 实时取证与作答",
   switch_prepare:"正式方法 真实索引构造配对", switch:"正式方法 四卡训练对照",
   switch_transfer_prepare:"复用已核验的取证配对", switch_transfer:"四卡训练与自然题查询重排",
-  w7_gap:"缺失事实补查 同预算对照", w7_reader:"固定检索后的证据呈现对照"};
+  w7_gap:"缺失事实补查 同预算对照", w7_reader:"固定检索后的证据呈现对照",
+  w7_bridge:"同预算跨页证据选择"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   scanning_title_catalog:"核对原 Wikipedia 语料的可见标题",
@@ -410,6 +411,7 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   evaluating_live_follow_up:"执行首查与补查并比较最终作答",
   evaluating_missing_fact_queries:"比较直接生成和面向缺失事实的补查",
   comparing_reader_evidence:"比较整段、片段和已取得的参考证据",
+  comparing_linked_evidence:"比较独立片段与成对片段的证据保留和作答",
   mining_two_fact_questions:"从固定语料挖掘双事实问题",
   verifying_two_fact_queries:"用实际 top-3 核验配对收益",
   gating_on_frozen_reader:"核验新增证据能否使同一读者答对",
