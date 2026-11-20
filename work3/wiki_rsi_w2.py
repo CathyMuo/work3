@@ -327,7 +327,7 @@ def main(argv=None):
                                           "action-pilot-prepare", "action-pilot",
                                           "action-train-prepare", "action-train", "overnight-prepare", "overnight",
                                           "action-diagnosis", "two-query", "two-query-live-prepare", "two-query-live",
-                                          "switch-prepare", "switch"))
+                                          "switch-prepare", "switch", "switch-transfer-prepare", "switch-transfer"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -355,7 +355,7 @@ def main(argv=None):
         parser.error("Set P0_ITER3_MODEL to the original P0 model")
     if cpu_stage and not args.drzero:
         parser.error("Set DRZERO_DIR to the original Dr. Zero checkout")
-    if not (offline or cpu_stage or args.phase in {"answer", "repair-answer"}) and (
+    if not (offline or cpu_stage or args.phase in {"answer", "repair-answer", "switch-transfer"}) and (
             not args.retriever or not args.retriever_id):
         parser.error("Set WIKI_RSI_RETRIEVER and WIKI_RSI_RETRIEVER_ID for the original P0 service")
     if not 0 < args.gpu_memory < 1:
@@ -363,7 +363,12 @@ def main(argv=None):
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase == "switch-prepare":
+    if args.phase.startswith("switch-transfer"):
+        from work3 import wiki_rsi_switch_transfer as transfer
+
+        phase, action = (("switch_transfer_prepare", transfer.prepare) if cpu_stage
+                         else ("switch_transfer", transfer.run))
+    elif args.phase == "switch-prepare":
         from work3 import wiki_rsi_switch_data as switch_data
 
         phase, action = "switch_prepare", switch_data.prepare

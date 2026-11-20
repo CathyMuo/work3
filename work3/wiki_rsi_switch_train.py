@@ -145,8 +145,9 @@ def fit(config, folder):
     import torch
 
     from work3 import wiki_rsi_action_model as model_tools
+    from work3 import wiki_rsi_switch_transfer as transfer
 
-    path = folder / ENCODED
+    path = Path(config["encoded_path"]) if "encoded_path" in config else folder / ENCODED
     if sha256(path) != config["encoded_sha256"]:
         raise ValueError("Worker output from the reader gate changed")
     groups = replay.read_json(path)["records"]
@@ -161,14 +162,18 @@ def fit(config, folder):
         for adapter in adapters:
             adapter.enabled = False
         atomic_json(folder / "frozen.json", evaluate(model, groups["test"], pad, device))
+        if "natural" in groups:
+            atomic_json(folder / "frozen_natural.json", transfer.natural_policy(model, groups["natural"], pad, device))
         for adapter in adapters:
             adapter.enabled = True
     budget = train(model, adapters, groups["train"], device, pad, seed, arm)
     results = evaluate(model, groups["test"], pad, device)
     stem = f"{seed}-{arm}"
     torch.save([param.detach().cpu() for param in model_tools.trainable(adapters)], folder / f"{stem}.pt")
-    atomic_json(folder / f"{stem}.json", {"encoded_sha256": config["encoded_sha256"],
-                "training": budget, "held_out": results})
+    receipt = {"encoded_sha256": config["encoded_sha256"], "training": budget, "held_out": results}
+    if "natural" in groups:
+        receipt["natural"] = transfer.natural_policy(model, groups["natural"], pad, device)
+    atomic_json(folder / f"{stem}.json", receipt)
 
 
 def launch(folder, name, config, gpu):
@@ -178,6 +183,36 @@ def launch(folder, name, config, gpu):
     with (folder / f"{name}.log").open("wb") as log:
         return subprocess.Popen([sys.executable, "-m", __name__, name, str(path)], env=env,
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+
+
+def run_jobs(folder, base, devices, deadline, progress):
+    processes = []
+    try:
+        for (seed, arm), gpu in zip(JOBS, devices, strict=True):
+            processes.append(launch(folder, f"{seed}-{arm}", {**base, "seed": seed, "arm": arm}, gpu))
+        while True:
+            codes = [job.poll() for job in processes]
+            progress.update("running", codes.count(0), len(JOBS), detail="training_evidence_switch")
+            remaining = deadline - time.monotonic()
+            if any(code not in (0, None) for code in codes) or all(code == 0 for code in codes) or remaining <= 0:
+                break
+            time.sleep(min(3, remaining))
+    finally:
+        parallel.terminate(processes)
+    return [{"seed": seed, "arm": arm, "gpu": gpu, "exit_code": job.returncode}
+            for (seed, arm), gpu, job in zip(JOBS, devices, processes, strict=True)]
+
+
+def job_results(folder, jobs, digest):
+    if any(job["exit_code"] != 0 for job in jobs):
+        return False, {}
+    names = [f"{seed}-{arm}" for seed, arm in JOBS]
+    results = {name: replay.read_json(folder / f"{name}.json") for name in names}
+    budgets = [row["training"] for row in results.values()]
+    if (any(row["encoded_sha256"] != digest for row in results.values())
+            or any(budget != budgets[0] for budget in budgets[1:])):
+        raise ValueError("The four jobs used different examples or training budgets")
+    return True, results
 
 
 def run(args, run_dir, progress):
@@ -222,38 +257,15 @@ def run(args, run_dir, progress):
         progress.update("blocked", detail="insufficient_reader_verified_pairs")
         print(json.dumps(report, indent=2), flush=True)
         return 2
-    processes = []
-    try:
-        for (seed, arm), gpu in zip(JOBS, devices, strict=True):
-            config = {**base, "seed": seed, "arm": arm, "encoded_sha256": receipt["encoded_sha256"]}
-            processes.append(launch(folder, f"{seed}-{arm}", config, gpu))
-        while True:
-            codes = [job.poll() for job in processes]
-            progress.update("running", codes.count(0), len(JOBS), detail="training_evidence_switch")
-            remaining = deadline - time.monotonic()
-            if any(code not in (0, None) for code in codes) or all(code == 0 for code in codes) or remaining <= 0:
-                break
-            time.sleep(min(3, remaining))
-    finally:
-        parallel.terminate(processes)
-    results = {}
-    completed = all(job.returncode == 0 for job in processes)
-    if completed:
-        for seed, arm in JOBS:
-            name = f"{seed}-{arm}"
-            results[name] = replay.read_json(folder / f"{name}.json")
-        budgets = [row["training"] for row in results.values()]
-        if (any(row["encoded_sha256"] != receipt["encoded_sha256"] for row in results.values())
-                or any(budget != budgets[0] for budget in budgets[1:])):
-            raise ValueError("The four jobs used different examples or training budgets")
+    jobs = run_jobs(folder, {**base, "encoded_sha256": receipt["encoded_sha256"]}, devices, deadline, progress)
+    completed, results = job_results(folder, jobs, receipt["encoded_sha256"])
     report.update({"decision": "held_out_pair_results_ready" if completed else "incomplete_workers",
-                   "jobs": [{"seed": seed, "arm": arm, "gpu": gpu, "exit_code": job.returncode}
-                            for (seed, arm), gpu, job in zip(JOBS, devices, processes, strict=True)],
+                   "jobs": jobs,
                    "results": results, "wall_seconds": round(time.monotonic() - start, 3)})
     if completed:
         report["frozen_test"] = replay.read_json(folder / "frozen.json")
     atomic_json(run_dir / SUMMARY, report)
-    progress.update("done" if completed else "blocked", sum(job.returncode == 0 for job in processes), len(JOBS),
+    progress.update("done" if completed else "blocked", sum(job["exit_code"] == 0 for job in jobs), len(JOBS),
                     detail="completed")
     print(json.dumps(report, indent=2), flush=True)
     return 0 if completed else 2
