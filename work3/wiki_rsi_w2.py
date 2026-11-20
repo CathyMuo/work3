@@ -325,7 +325,8 @@ def main(argv=None):
                                           "repair-answer-prepare", "repair-answer", "natural-prepare", "natural-check",
                                           "natural-query-prepare", "natural-query",
                                           "action-pilot-prepare", "action-pilot",
-                                          "action-train-prepare", "action-train", "overnight-prepare", "overnight"))
+                                          "action-train-prepare", "action-train", "overnight-prepare", "overnight",
+                                          "action-diagnosis"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -344,22 +345,28 @@ def main(argv=None):
         parser.error("--native-gpus applies to contract, budget and answer")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", args.run):
         parser.error("--run requires the original W1 run name")
+    offline = args.phase == "action-diagnosis"
     cpu_stage = args.phase == "prepare" or args.phase.endswith("-prepare")
     no_model = {"candidates", "candidate-audit", "candidate-audit-prepare",
                 "coverage-audit", "coverage-audit-prepare", "repair-pool", "repair-pool-prepare", "repair-audit",
                 "natural-check", "action-pilot"}
-    if args.phase not in no_model and not args.model_dir:
+    if not offline and args.phase not in no_model and not args.model_dir:
         parser.error("Set P0_ITER3_MODEL to the original P0 model")
     if cpu_stage and not args.drzero:
         parser.error("Set DRZERO_DIR to the original Dr. Zero checkout")
-    if not cpu_stage and args.phase not in {"answer", "repair-answer"} and (not args.retriever or not args.retriever_id):
+    if not (offline or cpu_stage or args.phase in {"answer", "repair-answer"}) and (
+            not args.retriever or not args.retriever_id):
         parser.error("Set WIKI_RSI_RETRIEVER and WIKI_RSI_RETRIEVER_ID for the original P0 service")
     if not 0 < args.gpu_memory < 1:
         parser.error("--gpu-memory must be between zero and one")
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase.startswith("overnight"):
+    if offline:
+        from work3 import wiki_rsi_action_diagnosis as diagnosis
+
+        phase, action = "w6_query_diagnosis", diagnosis.run
+    elif args.phase.startswith("overnight"):
         from work3 import wiki_rsi_action_overnight as overnight
 
         phase, action = (("w6_overnight_prepare", overnight.prepare) if cpu_stage
@@ -434,6 +441,9 @@ def main(argv=None):
         except BlockingIOError:
             parser.error("Another stage is active for this run")
         if result.exists():
+            if args.phase == "overnight-prepare":
+                print("Using the existing overnight preparation. The GPU stage verifies its provenance.")
+                return 0
             parser.error("This stage has already completed")
         progress = Progress(run_dir, phase)
         progress.update("running", detail="checking_inputs")

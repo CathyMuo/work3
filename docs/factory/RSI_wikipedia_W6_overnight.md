@@ -38,7 +38,7 @@ nohup bash scripts/run_wiki_rsi_overnight.sh --run "$RUN" \
 echo "W6b PID: $!"
 ```
 
-同一 RUN 已有实验运行时先检查其状态。若 CPU 扩充已经成功且只需启动 GPU 阶段，可单独执行 `bash scripts/run_wiki_rsi_w2a.sh overnight --run "$RUN"`。可以从看板或者 `w6_overnight_console.log` 查看准备状态和已齐的检查点。
+同一 RUN 已有实验运行时先检查其状态。CPU 扩充成功后，组合入口可直接复用已有准备文件，由 GPU 阶段验证来源和哈希。也可单独使用 `bash scripts/run_wiki_rsi_w2a.sh overnight --run "$RUN"`。可以从看板或者 `w6_overnight_console.log` 查看准备状态和已齐的检查点。
 
 ## 回传
 
