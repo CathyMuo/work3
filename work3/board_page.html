@@ -386,7 +386,8 @@ const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", prefligh
   w6_action_pilot_prepare:"W6a 隔离训练与评估页", w6_action_pilot:"W6a 验证训练动作和自然题基线",
   w6_action_train_prepare:"W6b 短训输入复核", w6_action_train:"W6b 正例与配对短训",
   w6_overnight_prepare:"W6b 四卡 扩充真实动作对", w6_overnight:"W6b 四卡 两种子同预算对照",
-  w6_query_diagnosis:"W6c 离线复核取证失败", w7_two_query:"W7a 两次查询同预算复核"};
+  w6_query_diagnosis:"W6c 离线复核取证失败", w7_two_query:"W7a 两次查询同预算复核",
+  w7_live_prepare:"W7b 锁定新支持页", w7_live:"W7b 实时取证与作答"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   scanning_title_catalog:"核对原 Wikipedia 语料的可见标题",
@@ -403,6 +404,7 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   evaluating_action_pilot:"在独立自然题上执行单查评估",
   waiting_overnight_workers:"等待四张卡达到同一评估检查点",
   diagnosing_cached_queries:"复核已保存的查询和真实检索返回",
+  evaluating_live_follow_up:"执行首查与补查并比较最终作答",
   checking_history:"检查对话边界和证据对照", checking_checkpoint:"校验权重散列",
   loading_solver:"加载第三轮解题器", generating:"生成并评分",
   checking_retriever:"复查原 P0 检索服务", querying_wikipedia:"查询固定 Wikipedia 索引",
