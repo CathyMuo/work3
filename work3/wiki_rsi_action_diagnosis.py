@@ -63,7 +63,7 @@ def summarize(rows):
     }
 
 
-def run(args, run_dir, progress):
+def cached_inputs(run_dir):
     prepare_path, result_path = run_dir / overnight.PREP_SUMMARY, run_dir / overnight.SUMMARY
     ready, result = w1.read_json(prepare_path), w1.read_json(result_path)
     prepared_path = run_dir / overnight.PREPARED
@@ -87,15 +87,22 @@ def run(args, run_dir, progress):
     for original, cached in zip(cases, prepared["evaluation"], strict=True):
         if any(original[k] != cached[k] for k in ("qid", "dataset", "title_stratum", "missing_facts")):
             raise ValueError("The W6b evaluation case order or content changed")
+    return result, ready, prepared, folder, cases, baseline_by_case
 
+
+def epoch_rows(folder, prepared, ready, epoch):
+    checks = overnight.matched_report(folder, prepared["evaluation"], ready["prepared_sha256"], epoch)
+    if checks is None:
+        raise ValueError(f"The cached workers do not contain the complete epoch {epoch}")
+    return {policy: w1.read_json(folder / (f"{policy}-{epoch}.json" if policy != "frozen" else "frozen.json"))["rows"]
+            for policy in POLICIES}
+
+
+def run(args, run_dir, progress):
+    result, ready, prepared, folder, cases, baseline_by_case = cached_inputs(run_dir)
     outputs, reports = {}, {}
-    frozen = w1.read_json(folder / "frozen.json")["rows"]
     for epoch in overnight.CHECKPOINTS:
-        checkpoints = overnight.matched_report(folder, prepared["evaluation"], ready["prepared_sha256"], epoch)
-        if checkpoints is None:
-            raise ValueError(f"The cached workers do not contain the complete epoch {epoch}")
-        rows_by_policy = {"frozen": frozen, **{
-            policy: w1.read_json(folder / f"{policy}-{epoch}.json")["rows"] for policy in POLICIES[1:]}}
+        rows_by_policy = epoch_rows(folder, prepared, ready, epoch)
         rows = []
         for index, case in enumerate(cases):
             baseline = baseline_by_case[case["dataset"], case["qid"]]
@@ -117,7 +124,8 @@ def run(args, run_dir, progress):
                         raise ValueError("Per-question records do not match the reported arm totals")
         reports[epoch] = grouped
         progress.update("running", len(reports), len(overnight.CHECKPOINTS), detail="diagnosing_cached_queries")
-    summary = {"protocol": PROTOCOL, "repo_revision": revision(w2.ROOT), "source_summary_sha256": sha256(result_path),
+    summary = {"protocol": PROTOCOL, "repo_revision": revision(w2.ROOT),
+               "source_summary_sha256": sha256(run_dir / overnight.SUMMARY),
                "source_train_pairs": result["train_pairs"], "source_decision": result["decision"],
                "new_physical_queries": 0, "by_epoch": reports}
     atomic_json(run_dir / CASES, {"protocol": PROTOCOL, "by_epoch": outputs})

@@ -326,7 +326,7 @@ def main(argv=None):
                                           "natural-query-prepare", "natural-query",
                                           "action-pilot-prepare", "action-pilot",
                                           "action-train-prepare", "action-train", "overnight-prepare", "overnight",
-                                          "action-diagnosis"))
+                                          "action-diagnosis", "two-query"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -345,7 +345,7 @@ def main(argv=None):
         parser.error("--native-gpus applies to contract, budget and answer")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", args.run):
         parser.error("--run requires the original W1 run name")
-    offline = args.phase == "action-diagnosis"
+    offline = args.phase in {"action-diagnosis", "two-query"}
     cpu_stage = args.phase == "prepare" or args.phase.endswith("-prepare")
     no_model = {"candidates", "candidate-audit", "candidate-audit-prepare",
                 "coverage-audit", "coverage-audit-prepare", "repair-pool", "repair-pool-prepare", "repair-audit",
@@ -362,7 +362,11 @@ def main(argv=None):
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if offline:
+    if args.phase == "two-query":
+        from work3 import wiki_rsi_two_query as two_query
+
+        phase, action = "w7_two_query", two_query.run
+    elif args.phase == "action-diagnosis":
         from work3 import wiki_rsi_action_diagnosis as diagnosis
 
         phase, action = "w6_query_diagnosis", diagnosis.run
