@@ -387,7 +387,8 @@ const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", prefligh
   w6_action_train_prepare:"W6b 短训输入复核", w6_action_train:"W6b 正例与配对短训",
   w6_overnight_prepare:"W6b 四卡 扩充真实动作对", w6_overnight:"W6b 四卡 两种子同预算对照",
   w6_query_diagnosis:"W6c 离线复核取证失败", w7_two_query:"W7a 两次查询同预算复核",
-  w7_live_prepare:"W7b 锁定新支持页", w7_live:"W7b 实时取证与作答"};
+  w7_live_prepare:"W7b 锁定新支持页", w7_live:"W7b 实时取证与作答",
+  switch_prepare:"正式方法 真实索引构造配对", switch:"正式方法 四卡训练对照"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   scanning_title_catalog:"核对原 Wikipedia 语料的可见标题",
@@ -405,6 +406,10 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   waiting_overnight_workers:"等待四张卡达到同一评估检查点",
   diagnosing_cached_queries:"复核已保存的查询和真实检索返回",
   evaluating_live_follow_up:"执行首查与补查并比较最终作答",
+  mining_two_fact_questions:"从固定语料挖掘双事实问题",
+  verifying_two_fact_queries:"用实际 top-3 核验配对收益",
+  gating_on_frozen_reader:"核验新增证据能否使同一读者答对",
+  training_evidence_switch:"等待两种训练目标各两个种子完成",
   checking_history:"检查对话边界和证据对照", checking_checkpoint:"校验权重散列",
   loading_solver:"加载第三轮解题器", generating:"生成并评分",
   checking_retriever:"复查原 P0 检索服务", querying_wikipedia:"查询固定 Wikipedia 索引",

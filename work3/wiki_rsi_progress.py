@@ -19,7 +19,7 @@ PHASES = ("audit", "prepare", "preflight", "smoke", "replay", "w2a_prepare", "w2
           "w5_natural_query_prepare", "w5_natural_query",
           "w6_action_pilot_prepare", "w6_action_pilot",
           "w6_action_train_prepare", "w6_action_train", "w6_overnight_prepare", "w6_overnight",
-          "w6_query_diagnosis", "w7_two_query", "w7_live_prepare", "w7_live")
+          "w6_query_diagnosis", "w7_two_query", "w7_live_prepare", "w7_live", "switch_prepare", "switch")
 STATES = ("running", "done", "failed", "blocked", "stalled")
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "outputs" / "wiki_rsi"

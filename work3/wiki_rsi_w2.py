@@ -326,7 +326,8 @@ def main(argv=None):
                                           "natural-query-prepare", "natural-query",
                                           "action-pilot-prepare", "action-pilot",
                                           "action-train-prepare", "action-train", "overnight-prepare", "overnight",
-                                          "action-diagnosis", "two-query", "two-query-live-prepare", "two-query-live"))
+                                          "action-diagnosis", "two-query", "two-query-live-prepare", "two-query-live",
+                                          "switch-prepare", "switch"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -362,7 +363,15 @@ def main(argv=None):
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase.startswith("two-query-live"):
+    if args.phase == "switch-prepare":
+        from work3 import wiki_rsi_switch_data as switch_data
+
+        phase, action = "switch_prepare", switch_data.prepare
+    elif args.phase == "switch":
+        from work3 import wiki_rsi_switch_train as switch_train
+
+        phase, action = "switch", switch_train.run
+    elif args.phase.startswith("two-query-live"):
         from work3 import wiki_rsi_two_query_live as live
 
         phase, action = (("w7_live_prepare", live.prepare) if cpu_stage else ("w7_live", live.run))
