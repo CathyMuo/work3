@@ -327,7 +327,8 @@ def main(argv=None):
                                           "action-pilot-prepare", "action-pilot",
                                           "action-train-prepare", "action-train", "overnight-prepare", "overnight",
                                           "action-diagnosis", "two-query", "two-query-live-prepare", "two-query-live",
-                                          "switch-prepare", "switch", "switch-transfer-prepare", "switch-transfer"))
+                                          "switch-prepare", "switch", "switch-transfer-prepare", "switch-transfer",
+                                          "gap-follow-up"))
     parser.add_argument("--run", required=True)
     parser.add_argument("--drzero", type=Path, default=os.environ.get("DRZERO_DIR"))
     parser.add_argument("--eval-dump", type=Path, default=os.environ.get("P0_EVAL_DUMP"))
@@ -363,7 +364,11 @@ def main(argv=None):
     run_dir = progress_root() / args.run
     if not run_dir.is_dir():
         parser.error("Use the existing W1 run directory")
-    if args.phase.startswith("switch-transfer"):
+    if args.phase == "gap-follow-up":
+        from work3 import wiki_rsi_gap_follow_up as gap
+
+        phase, action = "w7_gap", gap.run
+    elif args.phase.startswith("switch-transfer"):
         from work3 import wiki_rsi_switch_transfer as transfer
 
         phase, action = (("switch_transfer_prepare", transfer.prepare) if cpu_stage

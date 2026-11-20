@@ -171,6 +171,12 @@ def transfer_report(examples, receipts):
                            for key in ("correct", "evidence_complete", "queries")} for arm in policies},
             "oracle_answer_count": sum(max((o["correct"] for o in examples[index]["outcomes"]),
                                           default=examples[index]["first_only"]["correct"]) for index in indices),
+            "oracle_with_stop_answer_count": sum(max(
+                [examples[index]["first_only"]["correct"], *(row["correct"] for row in examples[index]["outcomes"])])
+                for index in indices),
+            "oracle_with_stop_evidence_count": sum(max(
+                [examples[index]["first_only"]["evidence_complete"],
+                 *(row["evidence_complete"] for row in examples[index]["outcomes"])]) for index in indices),
             "interaction_vs_ordinary": {
                 seed: {field: replay.paired([{key: {"correct": row[key][field]} for key in
                                             (f"{seed}-interaction", f"{seed}-ordinary")} for row in records],
@@ -178,6 +184,12 @@ def transfer_report(examples, receipts):
                        for field in ("correct", "evidence_complete")}
                 for seed in parallel.SEEDS}}
     return report
+
+
+def research_verdict(report):
+    gains = [report[dataset]["interaction_vs_ordinary"][seed]["correct"]["gain"]
+             for dataset in SUPPORT_DATASETS for seed in parallel.SEEDS]
+    return "eligible_for_fresh_confirmation" if all(gain is not None and gain > 0 for gain in gains) else "no_go"
 
 
 def run(args, run_dir, progress):
@@ -209,6 +221,7 @@ def run(args, run_dir, progress):
         selections = {name: row.pop("natural") for name, row in results.items()}
         report["frozen_test"] = replay.read_json(folder / "frozen.json")
         report["natural_replay"] = transfer_report(groups["records"]["natural"], baselines | selections)
+        report["research_verdict"] = research_verdict(report["natural_replay"])
     atomic_json(run_dir / SUMMARY, report)
     progress.update("done" if complete else "blocked", sum(job["exit_code"] == 0 for job in jobs), len(jobs),
                     detail="completed")

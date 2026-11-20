@@ -7,7 +7,7 @@ case "${1:-}" in
     export CUDA_VISIBLE_DEVICES="" OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
     python="${DIAG_PYTHON:-python}"
     ;;
-  run|contract|budget|answer|repair-answer|natural-query|action-train|overnight|two-query-live|switch|switch-transfer)
+  run|contract|budget|answer|repair-answer|natural-query|action-train|overnight|two-query-live|switch|switch-transfer|gap-follow-up)
     python="${REPLAY_PYTHON:-python}"
     ;;
   *)
