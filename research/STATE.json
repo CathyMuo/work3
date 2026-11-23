@@ -2,9 +2,9 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-23",
-  "current_stage": "动态监督分配 · 协议已冻结",
-  "status": "动态分配训练、四卡实验与实时进度入口已实现。真实运行结果待回传。",
-  "next_action": "首先锁定原索引、R1 / R3 与独立自然题。由五阶段 GO / NO-GO 自动放行，方法主指标为等预算的未见题严格 EM。",
+  "current_stage": "动态监督分配 v2 · 等待数据短筛",
+  "status": "v1 输入冻结 GO，双监督准备零对 NO-GO，方法训练未启动。",
+  "next_action": "复用 v1 冻结输入。3B 在 512 个源页上短筛，至少 80 对且三类各 10 对才完成剩余准备。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -108,7 +108,7 @@
   "p0_release": "p0-r16",
   "p1_release": "p1-r16",
   "p2_release": "p2-r16",
-  "rsi_current_protocol": "research/protocols/RSI_wikipedia_feedback_allocation.md",
-  "rsi_factory_guide": "docs/factory/RSI_wikipedia_feedback_allocation.md",
+  "rsi_current_protocol": "research/protocols/RSI_wikipedia_feedback_allocation_v2.md",
+  "rsi_factory_guide": "docs/factory/RSI_wikipedia_feedback_allocation_v2.md",
   "rsi_home_guide": "docs/RSI_wikipedia_home.md"
 }

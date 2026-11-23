@@ -3,7 +3,9 @@
 from math import comb, fsum
 from random import Random
 
-PROTOCOL = "wiki_rsi_feedback_allocation_v1"
+PROTOCOL = "wiki_rsi_feedback_allocation_v2"
+LEGACY_PROTOCOL = "wiki_rsi_feedback_allocation_v1"
+LEGACY_RELEASE = "542f9d72d15373a06bd06a27a8e8902373ac412c"
 DATASETS = ("hotpotqa", "2wikimultihopqa")
 PHASES = ("lock", "prepare", "mechanism", "pilot", "confirm")
 HOURS = {"lock": 0.75, "prepare": 2, "mechanism": 2, "pilot": 5, "confirm": 2}
@@ -12,6 +14,13 @@ SPLITS = {"schedule": 96, "development": 250, "confirmation": 600}
 MIN_CLUSTERS = {"schedule": 45, "development": 120, "confirmation": 300}
 FAMILIES = ("person", "place", "work", "organization")
 PROPOSALS = 4096
+SCREEN_SOURCES = 512
+SCREEN_MIN = 80
+SCREEN_MIN_FAMILY = 10
+SCREEN_SECONDS = 1800
+BRIDGE_LIMIT = 3
+SYNTHESIS_PER_SOURCE = 2
+SYNTHESIS_TOKENS = 160
 MIN_PAIRS = 640
 MIN_FAMILY = 80
 MAX_SHARE = 0.5
@@ -58,6 +67,11 @@ def enough_pairs(counts):
     n = sum(counts.values())
     return (n >= MIN_PAIRS and sum(counts.get(f, 0) >= MIN_FAMILY for f in FAMILIES) >= 3
             and max(counts.values(), default=0) <= MAX_SHARE * n)
+
+
+def enough_screen_pairs(counts):
+    return (sum(counts.values()) >= SCREEN_MIN
+            and sum(counts.get(f, 0) >= SCREEN_MIN_FAMILY for f in FAMILIES) >= 3)
 
 
 def mechanism_gate(reports):

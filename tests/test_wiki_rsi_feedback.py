@@ -2,13 +2,16 @@
 
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from work3 import wiki_rsi_feedback as runner
 from work3 import wiki_rsi_feedback_data as data
 from work3 import wiki_rsi_feedback_protocol as p
 from work3 import wiki_rsi_feedback_train as train
+from work3.evidence_ref import sha256
 from work3.wiki_rsi_progress import Progress, atomic_json, board_runs
 
 
@@ -27,6 +30,9 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(p.enough_pairs({"person": 640}))
         self.assertFalse(p.enough_pairs({"person": 316, "place": 159, "work": 160}))
         self.assertTrue(p.enough_pairs({"person": 320, "place": 160, "work": 160}))
+        self.assertFalse(p.enough_screen_pairs({"person": 29, "place": 30, "work": 20}))
+        self.assertFalse(p.enough_screen_pairs({"person": 60, "place": 40, "work": 9}))
+        self.assertTrue(p.enough_screen_pairs({"person": 40, "place": 30, "work": 10}))
 
     def test_mechanism_requires_reproducible_state_interaction(self):
         reports = {(seed, state, arm): {"scores": scores(correct=(16 if (state == "early") == (arm == "search") else 10))}
@@ -60,8 +66,96 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     runner.receipt(folder, "lock", {"v": "a"})
 
+    def test_zero_pair_v1_import_preserves_frozen_pages_and_rejects_tampering(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            v1, v2 = (Path(temporary) / stage for stage in ("v1", "v2"))
+            v1.mkdir()
+            v2.mkdir()
+            runtime = {"python": "test"}
+            locked = {"protocol": p.LEGACY_PROTOCOL, "titles": ["one", "two"], "source": {"corpus": "abc"},
+                      "models": {"early": {}, "late": {}}, "splits": {"confirmation": [{"page": "sealed"}]}}
+            original = v1 / data.LOCKED
+            atomic_json(original, locked)
+            common = {"protocol": p.LEGACY_PROTOCOL, "repo_revision": p.LEGACY_RELEASE,
+                      "contract": {"test": "abc"}, "runtime_versions": runtime}
+            atomic_json(runner.receipt_path(v1, "lock"), {**common, "phase": "lock", "verdict": "GO",
+                        "locked_sha256": sha256(original), "models": locked["models"], "inputs": locked["source"],
+                        "shared_first_queries": 1, "by_split": {}, "clusters": {}, "sources": 2, "drzero_revision": "abc"})
+            atomic_json(runner.receipt_path(v1, "prepare"), {**common, "phase": "prepare", "verdict": "NO-GO",
+                        "count": 0, "pairs_sha256": None})
+            args = SimpleNamespace(import_v1=v1, early_model=None, late_model=None)
+            with patch.object(p, "PROPOSALS", 2), patch.object(runner, "verify_context", return_value={}):
+                result = runner.reuse_v1_lock(args, v2, Progress(v2, "feedback_lock"), runtime)
+                self.assertTrue(result["ready"])
+                self.assertEqual(runner.read_json(v2 / data.LOCKED), {**locked, "protocol": p.PROTOCOL})
+                self.assertEqual(runner.read_json(original), locked)
+                atomic_json(original, {**locked, "titles": ["changed", "two"]})
+                with self.assertRaises(ValueError):
+                    runner.reuse_v1_lock(args, v2, Progress(v2, "feedback_lock"), runtime)
+
+    def test_prepare_no_go_never_opens_tail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            worker = {"sources": 128, "funnel": {}, "pairs": [], "queries": 130}
+            with patch.object(runner, "run_workers", return_value=("screen-dir", {"source-screen-0": worker})) as run:
+                result = runner.prepare(folder, Progress(folder, "feedback_prepare"), 1e15,
+                                        {"blocked_train_pages": []}, {}, {}, ["0"], Path("test"))
+                self.assertFalse(result["ready"])
+                self.assertEqual(result["reason"], "screen_no_go")
+                self.assertEqual(run.call_count, 1)
+                self.assertFalse((folder / data.PAIRS).exists())
+
 
 class DataTests(unittest.TestCase):
+    def test_compact_proof_ids_recover_original_verified_text(self):
+        source, bridge = "Sample Film", "Example Person"
+        first = [(source, f"{source} was directed by {bridge}.")]
+        second = [(bridge, f"{bridge} was born in Sampletown.")]
+        task = (source, bridge, first, second, [first[0][1]], [second[0][1]], "person")
+        funnel = Counter()
+        valid = '{"question":"Where was the director of Sample Film born?","answer":"Sampletown","proof":[1,1]}'
+        result = data.decode_pair(valid, task, funnel)
+        self.assertEqual(result["answer"], "Sampletown")
+        self.assertIsNone(data.decode_pair(valid.replace("[1,1]", "[1,2]"), task, funnel))
+        self.assertIsNone(data.decode_pair(valid.replace("Sampletown", "Another City"), task, funnel))
+        self.assertEqual(funnel, {"invalid_span_ids": 1, "semantic_or_evidence_rejected": 1})
+
+    def test_candidates_exclude_the_source_and_use_real_bounded_spans(self):
+        body = ("Sample Film was directed by Example Person. Old Studio produced it. "
+                "Bridge evidence includes " + "real words " * 36 + "entirely within this retrieved passage.")
+        options = dict(data.bridge_options("Sample Film", body, {"old studio"}))
+        self.assertNotIn("Sample Film", options)
+        self.assertNotIn("Old Studio", options)
+        self.assertIn("Example Person", options)
+        for span in data.text_spans(body):
+            self.assertTrue(12 <= len(span) <= 280)
+            self.assertIn(span, body)
+
+    def test_merge_uses_a_rare_alternative_before_reused_support(self):
+        candidates = [{"qid": "a1", "source": "Source A", "bridge": "Frequent Page", "first": [], "second": []},
+                      {"qid": "a2", "source": "Source A", "bridge": "Rare Page", "first": [], "second": []},
+                      {"qid": "b1", "source": "Source B", "bridge": "Frequent Page", "first": [], "second": []}]
+        rows = data.merge_pairs([{"pairs": candidates}], {"blocked_train_pages": []})
+        self.assertEqual([row["qid"] for row in rows], ["a2", "b1"])
+
+    def test_prepare_shard_uses_real_returned_path_with_compact_generation(self):
+        question = "Where was the director of Sample Film born?"
+        first = [("Sample Film", "Sample Film was directed by Example Person.")]
+        second = [("Example Person", "Example Person was born in Sampletown.")]
+        returns = {"Sample Film": first, "Example Person": second, question: first}
+        retriever = SimpleNamespace(search=lambda queries: [returns.get(value, []) for value in queries])
+        result = {"text": '{"question":"' + question + '","answer":"Sampletown","proof":[1,1]}',
+                  "finish": "stop"}
+        spec = {"retriever": "unused", "source_range": [0, 1], "shard": 0}
+        locked = {"titles": ["Sample Film"], "blocked_train_pages": [], "splits": {}}
+        with patch.object(data.wiki, "Retriever", return_value=retriever), patch.object(data, "synthesis_prompt"):
+            report = data.prepare_shard(spec, locked, None, None, None, lambda *args: [result], lambda *a, **k: None)
+            pair, = report["pairs"]
+            self.assertEqual((pair["question"], pair["bridge"]), (question, "Example Person"))
+            self.assertTrue(pair["question_first_witness"])
+            self.assertEqual(report["queries"], 3)
+            self.assertEqual(report["funnel"]["bridge_sources_retrieved"], 1)
+
     def test_support_pages_stay_in_one_split_and_same_split_clusters_join(self):
         pool = {ds: [{"qid": f"{ds}-{i}", "pages": [f"{ds}-a{i}", f"{ds}-b{i}"]}
                      for i in range(6)] for ds in p.DATASETS}

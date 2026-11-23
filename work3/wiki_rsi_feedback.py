@@ -19,6 +19,7 @@ from work3.wiki_rsi_references import WIKI_RSI_REFERENCES
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = (
+    ROOT / "research/protocols/RSI_wikipedia_feedback_allocation_v2.md",
     ROOT / "research/protocols/RSI_wikipedia_feedback_allocation.md",
     *(ROOT / "work3" / f"wiki_rsi_feedback{suffix}.py" for suffix in ("", "_protocol", "_train", "_data")),
     *(ROOT / "work3" / f"{name}.py" for name in (
@@ -90,13 +91,14 @@ def run_worker(path):
     if spec["phase"] == "prepare":
         report = data.prepare_shard(spec, inputs, tok, model, device, model_tools.generate_queries, progress)
         report["pairs"] = [row for row in report["pairs"] if train.encode_pair(tok, row) is not None]
+        report["funnel"]["encoded"] = len(report["pairs"])
     else:
         report = train.run(spec, inputs, rows, tok, model, device, progress, out)
     atomic_json(out / "result.json", report)
     return 0
 
 
-def run_workers(folder, phase, specs, devices, deadline, progress):
+def run_workers(folder, phase, specs, devices, deadline, progress, detail="feedback_workers"):
     root = Path(tempfile.mkdtemp(prefix=f"{phase}-workers-", dir=folder))
     queued, active, completed = list(specs), {}, {}
     errors = False
@@ -129,7 +131,7 @@ def run_workers(folder, phase, specs, devices, deadline, progress):
                 active[device] = (spec, child)
             workers = [{"name": spec["name"], "device": device, **telemetry(root / spec["name"])}
                        for device, (spec, _) in active.items()]
-            progress.update("running", len(completed), len(specs), detail="feedback_workers",
+            progress.update("running", len(completed), len(specs), detail=detail,
                             metrics={"active_gpus": len(active)}, workers=workers)
             if active:
                 time.sleep(1)
@@ -165,6 +167,75 @@ def verify_context(args, locked, needed):
     return result
 
 
+def reuse_v1_lock(args, folder, progress, versions):
+    from work3 import wiki_rsi_feedback_data as data
+
+    source = args.import_v1.resolve()
+    lock_report, prep_report = (read_json(receipt_path(source, phase)) for phase in ("lock", "prepare"))
+    if (source == folder.resolve() or
+            any(rep["protocol"] != p.LEGACY_PROTOCOL or rep["repo_revision"] != p.LEGACY_RELEASE
+                for rep in (lock_report, prep_report)) or
+            lock_report["phase"] != "lock" or prep_report["phase"] != "prepare" or
+            lock_report["verdict"] != "GO" or prep_report["verdict"] != "NO-GO" or prep_report["count"] != 0 or
+            prep_report["pairs_sha256"] is not None or lock_report["contract"] != prep_report["contract"] or
+            any(rep["runtime_versions"] != versions for rep in (lock_report, prep_report))):
+        raise ValueError("Reuse requires the original v1 lock GO and zero-pair prepare NO-GO")
+    old_path = source / data.LOCKED
+    old_digest = sha256(old_path)
+    if old_digest != lock_report["locked_sha256"]:
+        raise ValueError("The archived v1 locked input has changed")
+    locked = read_json(old_path)
+    titles = locked["titles"]
+    if (locked["protocol"] != p.LEGACY_PROTOCOL or len(titles) != p.PROPOSALS or
+            len(set(titles)) != len(titles) or locked["source"] != lock_report["inputs"] or
+            locked["models"] != lock_report["models"]):
+        raise ValueError("The v1 lock artifact does not match its recorded input and models")
+    progress.update("running", detail="feedback_import_v1")
+    anchors = verify_context(args, locked, {"early": args.early_model, "late": args.late_model})
+    atomic_json(folder / data.LOCKED, {**locked, "protocol": p.PROTOCOL})
+    return {"ready": True, "locked_sha256": sha256(folder / data.LOCKED), "v1_locked_sha256": old_digest,
+            "v1_receipts_sha256": {phase: sha256(receipt_path(source, phase)) for phase in ("lock", "prepare")},
+            **{key: lock_report[key] for key in ("by_split", "clusters", "sources", "inputs", "models",
+                                                "drzero_revision")},
+            "anchor_checks": anchors, "shared_first_queries": 0,
+            "reused_first_query_cache": lock_report["shared_first_queries"]}
+
+
+def prepare(folder, progress, deadline, locked, anchors, common, devices, model):
+    from work3 import wiki_rsi_feedback_data as data
+
+    reports, jobs, counts = {}, [], Counter()
+    screen = {}
+    for label, start, stop in (("screen", 0, p.SCREEN_SOURCES), ("tail", p.SCREEN_SOURCES, p.PROPOSALS)):
+        progress.update("running", detail=f"feedback_prepare_{label}")
+        specs = [{**common, "name": f"source-{label}-{index}", "shard": index, "model": str(model),
+                  "source_range": [start, stop]} for index in range(4)]
+        part_deadline = min(deadline, time.monotonic() + p.SCREEN_SECONDS) if label == "screen" else deadline
+        directory, result = run_workers(folder, "prepare", specs, devices, part_deadline, progress,
+                                        detail=f"feedback_prepare_{label}")
+        jobs.append(directory)
+        reports.update(result)
+        rows = data.merge_pairs(reports.values(), locked)
+        counts = Counter(row["family"] for row in rows)
+        if label == "screen":
+            screen = {"count": len(rows), "by_family": dict(counts), "passed": p.enough_screen_pairs(counts)}
+            if not screen["passed"]:
+                break
+    ready = screen["passed"] and p.enough_pairs(counts)
+    if ready:
+        atomic_json(folder / data.PAIRS, {"protocol": p.PROTOCOL, "pairs": rows})
+    funnel = Counter()
+    for report in reports.values():
+        funnel.update(report["funnel"])
+    return {"ready": ready, "count": len(rows), "by_family": dict(counts), "anchor_checks": anchors,
+            "reason": "ready" if ready else "insufficient_pairs" if screen["passed"] else "screen_no_go",
+            "screen": screen, "sources": sum(row["sources"] for row in reports.values()),
+            "triage": dict(Counter(row["triage"] for row in rows)),
+            "question_first_witness": sum(row["question_first_witness"] for row in rows),
+            "funnel": dict(funnel), "queries": sum(row["queries"] for row in reports.values()),
+            "jobs_dirs": jobs, "pairs_sha256": sha256(folder / data.PAIRS) if ready else None}
+
+
 def experiment(args, folder, progress, contract, deadline):
     from work3 import wiki_rsi_feedback_data as data
 
@@ -186,19 +257,7 @@ def experiment(args, folder, progress, contract, deadline):
     anchors = verify_context(args, locked, model_paths)
     common = {"phase": phase, "retriever": args.retriever, "locked_sha256": frozen["locked_sha256"]}
     if phase == "prepare":
-        specs = [{**common, "name": f"source-{index}", "shard": index, "model": str(model_paths["late"])}
-                 for index in range(4)]
-        jobs, reports = run_workers(folder, phase, specs, devices, deadline, progress)
-        rows = data.merge_pairs(reports.values(), locked)
-        counts = Counter(row["family"] for row in rows)
-        ready = p.enough_pairs(counts)
-        if ready:
-            atomic_json(folder / data.PAIRS, {"protocol": p.PROTOCOL, "pairs": rows})
-        return {"ready": ready, "count": len(rows), "by_family": dict(counts), "anchor_checks": anchors,
-                "triage": dict(Counter(row["triage"] for row in rows)),
-                "question_first_witness": sum(row["question_first_witness"] for row in rows),
-                "queries": sum(row["queries"] for row in reports.values()), "jobs_dir": jobs,
-                "pairs_sha256": sha256(folder / data.PAIRS) if ready else None}
+        return prepare(folder, progress, deadline, locked, anchors, common, devices, model_paths["late"])
 
     if phase == "pilot":
         receipt(folder, "mechanism", contract)
@@ -261,6 +320,7 @@ def main(argv=None):
     parser.add_argument("phase", choices=p.PHASES)
     parser.add_argument("--run", required=True)
     parser.add_argument("--original-run", type=Path)
+    parser.add_argument("--import-v1", type=Path, help="reuse the exact v1 frozen split in a fresh v2 run")
     parser.add_argument("--drzero", type=Path)
     parser.add_argument("--test-parquet", type=Path)
     parser.add_argument("--eval-dump", type=Path)
@@ -275,8 +335,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not RUN_ID.fullmatch(args.run):
         parser.error("Use a fresh feedback-... run ID")
-    if args.phase == "lock" and not (args.original_run and args.drzero and args.early_model):
-        parser.error("lock requires --original-run, --drzero and --early-model")
+    if args.import_v1 and args.phase != "lock":
+        parser.error("--import-v1 is only accepted by lock")
+    if args.phase == "lock" and not (args.early_model and (args.import_v1 or (args.original_run and args.drzero))):
+        parser.error("lock requires --early-model and either --import-v1 or --original-run plus --drzero")
     if args.phase == "mechanism" and not args.early_model:
         parser.error("mechanism requires --early-model")
 
@@ -294,6 +356,8 @@ def main(argv=None):
         destination = receipt_path(folder, args.phase)
         if destination.exists():
             parser.error("This phase already has a final decision; use its saved summary")
+        if args.phase == "lock" and (folder / "wiki_rsi_feedback_prepare_summary.json").exists():
+            parser.error("Use a fresh run ID to protect the prior experiment")
         contract = {path.name: sha256(path) for path in CONTRACT}
         versions = {"python": sys.version.split()[0], **{
             name: version(name) for name in ("torch", "transformers", "numpy", "pyarrow")}}
@@ -310,7 +374,8 @@ def main(argv=None):
         start = time.monotonic()
         try:
             with progress.heartbeat():
-                result = experiment(args, folder, progress, contract, start + p.HOURS[args.phase] * 3600)
+                result = (reuse_v1_lock(args, folder, progress, versions) if args.import_v1 else
+                          experiment(args, folder, progress, contract, start + p.HOURS[args.phase] * 3600))
                 if time.monotonic() - start >= p.HOURS[args.phase] * 3600:
                     raise TimeoutError("Frozen phase budget exhausted")
         except TimeoutError:
@@ -325,8 +390,9 @@ def main(argv=None):
         atomic_json(destination, result)
         current = progress.data["phases"][progress.phase]
         progress.update("done" if ready else "blocked", current["done"] or int(ready), current["total"] or 1,
-                        detail=("feedback_go" if ready else "feedback_deadline"
-                                if result.get("reason") == "time_budget_exhausted" else "feedback_no_go"),
+                        detail=("feedback_go" if ready else {"time_budget_exhausted": "feedback_deadline",
+                                                            "screen_no_go": "feedback_screen_no_go"}.get(
+                                                                result.get("reason"), "feedback_no_go")),
                         metrics={"wall_seconds": result["wall_seconds"],
                                  **({"verified_pairs": result["count"]} if "count" in result else {})})
         print(json.dumps(result, indent=2, ensure_ascii=False), flush=True)

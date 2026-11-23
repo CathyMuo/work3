@@ -3,6 +3,7 @@
 import gzip
 import hashlib
 import json
+import re
 import time
 from collections import Counter
 from random import Random
@@ -217,81 +218,167 @@ def checked_pair(proposal, source, bridge, first, second, family):
             "facts": [(title_key(source), text_key(first_quote)), (title_key(bridge), text_key(second_quote))]}
 
 
-def source_prompt(tok, title, docs, family):
+CAPITALIZED = re.compile(r"\b[A-Z][\w'’\-]*(?:\s+(?:[A-Z][\w'’\-]*|of|the|and|de|von|van|in)){0,5}")
+EDGE_WORDS = frozenset("the of and de von van in a an this that he she they it his her their its during from".split())
+SENTENCE_BREAK = re.compile(r"(?<=[.!?;])\s+|[\r\n]+")
+
+
+def text_spans(text):
+    """Bound copied evidence by construction, while retaining contiguous source words."""
+    spans = []
+    for sentence in SENTENCE_BREAK.split(text):
+        sentence = sentence.strip()
+        if len(sentence) <= 280:
+            if len(sentence) >= 12:
+                spans.append(sentence)
+            continue
+        words = list(re.finditer(r"\S+", sentence))
+        start = end = 0
+        while start < len(words):
+            end = max(start, end)
+            while end < len(words) and words[end].end() - words[start].start() <= 280:
+                end += 1
+            if end > start:
+                span = sentence[words[start].start():words[end - 1].end()]
+                if len(span) >= 12:
+                    spans.append(span)
+            if end == len(words):
+                break
+            start = max(start + 1, end - 8)
+    return list(dict.fromkeys(spans))
+
+
+def bridge_options(source, body, blocked):
+    spans, names = text_spans(body), {}
+    source_text = text_key(source)
+    for span in spans:
+        for match in CAPITALIZED.finditer(span):
+            words = match[0].split()
+            while words and words[0].casefold() in EDGE_WORDS:
+                words.pop(0)
+            while words and words[-1].casefold() in EDGE_WORDS:
+                words.pop()
+            name = " ".join(words)
+            key = title_key(name)
+            normalized = text_key(name)
+            if (not 4 <= len(name) <= 90 or key in blocked or normalized == source_text or
+                    contains(source_text, normalized) or contains(normalized, source_text) or
+                    not any(c.isalpha() for c in name)):
+                continue
+            priority = (-int(len(words) > 1), -sum(contains(text_key(s), normalized) for s in spans),
+                        min(abs(len(words) - 2), 5), len(name), name)
+            names.setdefault(key, (priority, name))
+    return [(name, [span for span in spans if contains(text_key(span), text_key(name))][:4])
+            for _, name in sorted(names.values())[:protocol.BRIDGE_LIMIT]]
+
+
+def source_candidates(retriever, batch, blocked, funnel):
+    first_results = retriever.search([source for _, source in batch])
+    requests = []
+    for (index, source), found in zip(batch, first_results, strict=True):
+        first = clip([d for d in found if title_key(d[0]) == title_key(source)][:1])
+        if not first:
+            continue
+        funnel["source_page_retrieved"] += 1
+        options = bridge_options(source, first[0][1], blocked)
+        funnel["sources_with_bridge_candidate"] += bool(options)
+        for bridge, first_spans in options:
+            family = protocol.FAMILIES[(index // 4) % len(protocol.FAMILIES)]
+            requests.append((index, source, bridge, first, first_spans, family))
+    retrieved = retriever.search([request[2] for request in requests])
+    counts, tasks = Counter(), []
+    for (index, source, bridge, first, first_spans, family), found in zip(requests, retrieved, strict=True):
+        second = clip([doc for doc in found if title_key(doc[0]) == title_key(bridge)][:1])
+        if not second:
+            continue
+        second_spans = text_spans(second[0][1])[:12]
+        if second_spans and counts[index] < protocol.SYNTHESIS_PER_SOURCE:
+            counts[index] += 1
+            tasks.append((source, bridge, first, second, first_spans, second_spans, family))
+    funnel["bridge_sources_retrieved"] += len(counts)
+    funnel["bridge_paths_for_synthesis"] += len(tasks)
+    return tasks, len(batch) + len(requests)
+
+
+def synthesis_prompt(tok, source, bridge, first_spans, second_spans, family):
     return replay.render_ids(tok, [
-        {"role": "system", "content": "Identify a Wikipedia entity literally named in the supplied result. "
-         f"Try to find a {family} relation that can support a two-hop question. "
-         "Choose one distinct entity with a separate article. Return JSON {\"bridge\":\"exact text\"}."},
-        {"role": "user", "content": json.dumps({"source": title, "actual_return": clip(docs)}, ensure_ascii=False)},
+        {"role": "system", "content": "Write one natural two-hop Wikipedia question, at most 220 characters. "
+         "Use the exact source title in your question, describe rather than name the bridge, and do not include the "
+         "answer in the question. Select a source span and a bridge span that jointly resolve the question. "
+         "The answer is a short, exact substring of the selected bridge span, at most 72 characters. "
+         f"Use a {family} relation if possible. Return one compact JSON object only with question, answer, "
+         "and proof (two 1-based integer IDs, source first). Do not repeat the evidence text. "
+         'Format: {"question":"...?", "answer":"...", "proof":[1,2]}'},
+        {"role": "user", "content": json.dumps({"source": source, "bridge": bridge,
+                                               "source_spans": dict(enumerate(first_spans, 1)),
+                                               "bridge_spans": dict(enumerate(second_spans, 1))}, ensure_ascii=False)},
     ], tools=())
 
 
-def synthesis_prompt(tok, source, bridge, first, second, family):
-    return replay.render_ids(tok, [
-        {"role": "system", "content": "Write one short natural two-hop question that explicitly names the source "
-         "article's subject and needs the relation to the bridge and one fact about the bridge. "
-         "Do not name the bridge or answer in the question. Use the second result to give a short extractive answer. "
-         f"Use a {family} relation if possible. Return JSON with question, answer, first_quote, second_quote. "
-         "Quote a contiguous proof span from each article verbatim. The first quote includes the bridge name "
-         "and the second quote includes the answer."},
-        {"role": "user", "content": json.dumps({"source": source, "bridge": bridge, "first_return": clip(first),
-                                               "second_return": clip(second)}, ensure_ascii=False)},
-    ], tools=())
+def decode_pair(raw, task, funnel):
+    source, bridge, first, second, first_spans, second_spans, family = task
+    value = answer_field(raw)
+    if not value:
+        funnel["unparseable_json"] += 1
+        return None
+    proof = value.get("proof")
+    if (not isinstance(proof, list) or len(proof) != 2 or not all(type(i) is int for i in proof) or
+            not 1 <= proof[0] <= len(first_spans) or not 1 <= proof[1] <= len(second_spans)):
+        funnel["invalid_span_ids"] += 1
+        return None
+    value = {**value, "first_quote": first_spans[proof[0] - 1], "second_quote": second_spans[proof[1] - 1]}
+    row = checked_pair(value, source, bridge, first, second, family)
+    if row is None:
+        funnel["semantic_or_evidence_rejected"] += 1
+    return row
 
 
 def prepare_shard(spec, locked, tok, model, device, generate, progress):
     retriever = wiki.Retriever(spec["retriever"])
     blocked = set(locked["blocked_train_pages"])
     forbidden_qids = {row["qid"] for rows in locked["splits"].values() for row in rows}
-    pages = list(enumerate(locked["titles"]))[spec["shard"]::4]
-    retained, queries = [], 0
+    start, stop = spec["source_range"]
+    pages = list(enumerate(locked["titles"]))[start:stop][spec["shard"]::4]
+    retained, queries, processed = [], 0, 0
+    funnel = Counter()
     for batch in batches(pages):
-        first_results = retriever.search([source for _, source in batch])
-        queries += len(batch)
-        seeds = [(source, clip([d for d in docs if title_key(d[0]) == title_key(source)][:1]),
-                  protocol.FAMILIES[(index // 4) % len(protocol.FAMILIES)])
-                 for (index, source), docs in zip(batch, first_results, strict=True)]
-        seeds = [row for row in seeds if row[1]]
-        if seeds:
-            prompts = [source_prompt(tok, *row) for row in seeds]
-            suggestions = generate(model, tok, prompts, device, 64)
-            bridges = []
-            for (source, docs, family), output in zip(seeds, suggestions, strict=True):
-                name = answer_field(output["text"]).get("bridge")
-                if (isinstance(name, str) and 4 <= len(name) <= 90 and
-                        title_key(name) not in blocked | {title_key(source)} and
-                        contains(text_key(docs[0][1]), text_key(name)) and not replay.RISKY_TEXT.search(name)):
-                    bridges.append((source, name.strip(), docs, family))
-            found = retriever.search([bridge for _, bridge, _, _ in bridges])
-            queries += len(bridges)
-            tasks = [(source, bridge, first, clip([doc for doc in second if title_key(doc[0]) == title_key(bridge)][:1]),
-                      family) for (source, bridge, first, family), second in zip(bridges, found, strict=True)]
-            tasks = [row for row in tasks if row[3]]
-            if tasks:
-                prompts = [synthesis_prompt(tok, *row) for row in tasks]
-                generations = generate(model, tok, prompts, device, 320)
-                valid = [pair for row, output in zip(tasks, generations, strict=True)
-                         if (pair := checked_pair(answer_field(output["text"]), *row)) and pair["qid"] not in forbidden_qids]
-                results = retriever.search([row["question"] for row in valid])
-                queries += len(valid)
-                for row, first in zip(valid, results, strict=True):
-                    visible = [(title, body) for title, body in clip(first) if title_key(title) not in blocked]
-                    sees_bridge = has(visible, row["source"], row["facts"][0][1])
-                    complete = wiki.measure(visible, row["facts"])["all_missing_facts"]
-                    if sees_bridge and not complete:
-                        row["first"] = visible
-                    row["triage"] = "read" if complete else "search"
-                    row["question_first_witness"] = sees_bridge
-                    retained.append(row)
-        progress("feedback_generating", batch[-1][0] // 4 + 1, len(pages),
+        tasks, requested = source_candidates(retriever, batch, blocked, funnel)
+        queries += requested
+        valid = {}
+        for candidates in batches(tasks):
+            prompts = [synthesis_prompt(tok, source, bridge, first_spans, second_spans, family)
+                       for source, bridge, _, _, first_spans, second_spans, family in candidates]
+            generations = generate(model, tok, prompts, device, protocol.SYNTHESIS_TOKENS)
+            for task, output in zip(candidates, generations, strict=True):
+                funnel["length_stop"] += output["finish"] == "length"
+                pair = decode_pair(output["text"], task, funnel)
+                if pair and pair["qid"] not in forbidden_qids:
+                    valid.setdefault((title_key(pair["source"]), title_key(pair["bridge"])), pair)
+        results = retriever.search([row["question"] for row in valid.values()])
+        queries += len(valid)
+        for row, first in zip(valid.values(), results, strict=True):
+            visible = [(title, body) for title, body in clip(first) if title_key(title) not in blocked]
+            sees_bridge = has(visible, row["source"], row["facts"][0][1])
+            complete = wiki.measure(visible, row["facts"])["all_missing_facts"]
+            if sees_bridge and not complete:
+                row["first"] = visible
+            row["triage"] = "read" if complete else "search"
+            row["question_first_witness"] = sees_bridge
+            retained.append(row)
+        processed += len(batch)
+        progress("feedback_generating", processed, len(pages),
                  verified_pairs=len(retained), queries=queries)
-    return {"pairs": retained, "queries": queries, "sources": len(pages)}
+    funnel["verified_before_encoding"] = len(retained)
+    return {"pairs": retained, "queries": queries, "sources": len(pages), "funnel": dict(funnel)}
 
 
 def merge_pairs(reports, locked):
     blocked = set(locked["blocked_train_pages"])
     ids, pairs, seen_pages = set(), [], set()
-    for row in sorted((r for report in reports for r in report["pairs"]), key=lambda r: r["qid"]):
+    candidates = [r for report in reports for r in report["pairs"]]
+    bridge_frequency = Counter(title_key(row["bridge"]) for row in candidates)
+    order = sorted(candidates, key=lambda row: (bridge_frequency[title_key(row["bridge"])], row["qid"]))
+    for row in order:
         support = {title_key(row["source"]), title_key(row["bridge"])}
         observed = {title_key(title) for title, _ in [*row["first"], *row["second"]]}
         if row["qid"] not in ids and not (support & seen_pages or observed & blocked):

@@ -6,7 +6,7 @@
 
 同预算跨页证据选择已结束。当前实现动态分配查询与阅读监督的训练方法。从相同检查点进行两支等预算短更新，按独立验证收益继续训练，并在下一轮重新估计。主验证是相同总预算下与最强固定配比、固定失败分流和冻结调度相比，能否提高未见自然题严格 EM。
 
-数据冻结、双监督准备、四臂机制消融、两轮方法对照和独立确认依次推进。每阶段有程序化 GO / NO-GO，总墙钟上限 11 小时 45 分钟。终态和各卡处理量由实验运行页实时展示。当前结果待执行。[冻结协议](protocols/RSI_wikipedia_feedback_allocation.md) · [运行指南](../docs/factory/RSI_wikipedia_feedback_allocation.md)
+v1 的输入冻结通过，数据准备因零个可核验双监督对而终止。v2 使用真实桥接候选和证据窗口编号，先用 512 源页短筛。达标后处理剩余源页，再依次进入四臂、两轮方法对照和独立确认。后续研究门槛沿用 v1。终态和各卡处理量由实验运行页实时展示。[v2 冻结协议](protocols/RSI_wikipedia_feedback_allocation_v2.md) · [v2 运行指南](../docs/factory/RSI_wikipedia_feedback_allocation_v2.md)
 
 ## 研究问题与动机
 
