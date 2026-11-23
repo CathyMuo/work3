@@ -3,8 +3,8 @@
   "project": "work3",
   "updated_at": "2026-11-23",
   "current_stage": "方案 C · 离线持续强化学习 C1",
-  "status": "Wikipedia 双监督在数据准备收束。C1 与 C2 已冻结，等待厂内运行。",
-  "next_action": "四卡离线冒烟后运行 C1。仅在 A 增益、B 初始覆盖及 B 覆盖下降均达标时运行 C2。",
+  "status": "C1 未启动。初版正式冒烟因训练提示超限而未完成；厂内诊断包已验证四卡更新。已修复按模型分词核验输入。",
+  "next_action": "使用本地模型和原 parquet 重建 v2 数据包，按原 768 token 上限逐条预检。四卡离线冒烟通过后运行 C1，达到原冻结门槛才运行 C2。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",

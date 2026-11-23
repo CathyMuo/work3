@@ -11,9 +11,9 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from peft import LoraConfig, get_peft_model
 from torch.nn.parallel import DistributedDataParallel
-from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+from transformers import AutoModelForCausalLM, GenerationConfig
 
-from work3.continual_rlvr_data import score
+from work3.continual_rlvr_data import PROMPT_BOUND, load_prompt_tokenizer, prompt_ids, score
 from work3.continual_rlvr_protocol import BATCH_EVAL, CAP, GROUP, GUARD_FLOOR, LR, PREFIX
 
 
@@ -37,7 +37,7 @@ class Engine:
             raise RuntimeError("BF16-capable CUDA devices required")
         dist.init_process_group("nccl")
         self.deadline = deadline
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+        self.tokenizer = load_prompt_tokenizer(model_path)
         base = AutoModelForCausalLM.from_pretrained(
             model_path, local_files_only=True, torch_dtype=torch.bfloat16).to(self.device)
         self.eos = base.generation_config.eos_token_id
@@ -48,10 +48,9 @@ class Engine:
         self.prompts = {}
         for cases in splits.values():
             for case in cases:
-                ids = self.tokenizer.apply_chat_template(
-                    [{"role": "user", "content": case["prompt"]}], tokenize=True, add_generation_prompt=True)
-                if not ids or len(ids) > 768:
-                    raise ValueError(f"prompt exceeds the 768-token bound: {case['id']}")
+                ids = prompt_ids(self.tokenizer, case)
+                if not 1 <= len(ids) <= PROMPT_BOUND:
+                    raise ValueError(f"prompt {case['id']} has {len(ids)} tokens, expected 1–{PROMPT_BOUND}")
                 self.prompts[case["id"]] = tuple(ids)
         torch.manual_seed(23071)
         self.model = get_peft_model(base, LoraConfig(

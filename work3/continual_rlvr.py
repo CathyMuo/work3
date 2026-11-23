@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from work3.continual_rlvr_data import load_bundle, sha256_file
+from work3.continual_rlvr_data import load_bundle, load_prompt_tokenizer, prompt_audit, sha256_file, tokenizer_fingerprint
 from work3.continual_rlvr_protocol import BUDGET, PROTOCOL, check_scores, necessity_verdict
 from work3.wiki_rsi_progress import REPO, atomic_json, progress_root
 
@@ -26,21 +26,27 @@ def identify_inputs(args):
     weights = sorted(model.glob("model*.safetensors"))
     if not weights:
         raise ValueError("missing local safetensors weights")
+    files = [model / "config.json", model / "generation_config.json", *weights]
     index = model / "model.safetensors.index.json"
     if index.is_file():
         names = set(json.loads(index.read_text(encoding="utf-8"))["weight_map"].values())
         if names != {path.name for path in weights}:
             raise ValueError("safetensors index and local shards differ")
-    filenames = ("config.json", "tokenizer.json", "tokenizer_config.json", "generation_config.json")
-    files = [model / name for name in filenames]
-    files.extend(path for path in (index, model / "special_tokens_map.json",
-                                   model / "vocab.json", model / "merges.txt") if path.is_file())
-    versions = {name: importlib.metadata.version(name) for name in ("torch", *DEPENDENCIES)}
+        files.append(index)
+    versions = {name: importlib.metadata.version(name) for name in ("torch", "tokenizers", *DEPENDENCIES)}
     if any(versions[name] != version for name, version in DEPENDENCIES.items()):
         raise ValueError(f"expected {DEPENDENCIES}, found {versions}")
+    fingerprint = tokenizer_fingerprint(model)
+    policy = bundle["prompt_policy"]
+    if policy["tokenizer_sha256"] != fingerprint:
+        raise ValueError("bundle tokenizer files differ from the local model; repack from the original parquet files")
+    maxima = prompt_audit(bundle["splits"], load_prompt_tokenizer(model))
+    if maxima != policy["split_max_tokens"]:
+        raise ValueError("bundle prompt lengths differ from this runtime tokenizer")
     return {
         "protocol": PROTOCOL, "bundle_sha256": sha256_file(args.bundle), "sources": bundle["sources"],
-        "model_sha256": {path.name: sha256_file(path) for path in files + weights},
+        "model_sha256": {**fingerprint, **{path.name: sha256_file(path) for path in files}},
+        "prompt_policy": policy,
         "versions": versions, "python": sys.version.split()[0],
         "repo_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
     }, bundle

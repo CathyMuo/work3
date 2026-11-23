@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from work3.continual_rlvr import admit_method
-from work3.continual_rlvr_data import normalize, score, sha256_file, split_rows
+from work3.continual_rlvr_data import PROMPT_BOUND, normalize, prompt_audit, score, sha256_file, split_rows
 from work3.continual_rlvr_protocol import ARMS, SEEDS, method_verdict, necessity_verdict
 from work3.wiki_rsi_progress import Progress, board_runs
 
@@ -18,12 +18,21 @@ def b_row(question, phrase):
     }
 
 
+class MeasuredTokenizer:
+    def __init__(self, lengths=None):
+        self.lengths = lengths or {}
+
+    def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
+        assert tokenize and add_generation_prompt
+        return [1] * self.lengths.get(messages[0]["content"], 10)
+
+
 class ContinualDataTests(unittest.TestCase):
     def test_constraint_variants_stay_together(self):
         rows = [b_row("Question 1", "done"), b_row("Question 1", "complete"), b_row("Question 2", "done")]
         with patch("work3.continual_rlvr_data.SIZES", {"b_train": 1, "b_dev": 1}):
-            result = split_rows(rows, "b")
-            self.assertEqual(result, split_rows(reversed(rows), "b"))
+            result, maxima, replacements = split_rows(rows, "b", MeasuredTokenizer())
+            self.assertEqual((result, maxima, replacements), split_rows(reversed(rows), "b", MeasuredTokenizer()))
         self.assertNotEqual(result["b_train"][0]["group"], result["b_dev"][0]["group"])
         self.assertTrue(score(normalize("b", rows[0]), "The explanation is done"))
         self.assertFalse(score(normalize("b", rows[0]), "The explanation is undone"))
@@ -33,6 +42,26 @@ class ContinualDataTests(unittest.TestCase):
         self.assertTrue(score(case, r"The exact answer is \boxed{\frac{-1}{-2}}."))
         self.assertFalse(score(case, r"\boxed{0.5} but the answer is \boxed{1,2}"))
         self.assertFalse(score({"task": "a", "target": "12"}, r"\boxed{1,2}"))
+
+    def test_token_overflow_replaces_only_training_from_unused_groups(self):
+        rows = [b_row(f"Question {i}", "done") for i in range(6)]
+        sizes = {"b_anchor": 1, "b_train": 2, "b_dev": 1}
+        with patch("work3.continual_rlvr_data.SIZES", sizes):
+            original, _, _ = split_rows(rows, "b", MeasuredTokenizer())
+            old = original["b_train"][0]
+            tokenizer = MeasuredTokenizer({old["prompt"]: PROMPT_BOUND + 1})
+            updated, maxima, replacements = split_rows(rows, "b", tokenizer)
+            self.assertEqual(original["b_dev"], updated["b_dev"])
+            self.assertEqual(original["b_anchor"], updated["b_anchor"])
+            self.assertEqual(original["b_train"][1], updated["b_train"][1])
+            self.assertEqual(maxima, prompt_audit(updated, tokenizer))
+            self.assertEqual(replacements[0]["removed_id"], old["id"])
+            self.assertEqual(replacements[0]["removed_tokens"], PROMPT_BOUND + 1)
+            self.assertEqual(replacements[0]["replacement_id"], updated["b_train"][0]["id"])
+            old_groups = {case["group"] for cases in original.values() for case in cases}
+            self.assertNotIn(updated["b_train"][0]["group"], old_groups)
+            with self.assertRaisesRegex(ValueError, "frozen holdout cannot change"):
+                split_rows(rows, "b", MeasuredTokenizer({original["b_dev"][0]["prompt"]: PROMPT_BOUND + 1}))
 
 
 class ContinualGateTests(unittest.TestCase):

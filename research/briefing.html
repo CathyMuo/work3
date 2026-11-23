@@ -14,7 +14,8 @@
     <tr><td>C1 必要性</td><td>A 提升至少 5 个百分点，B 初始成功覆盖至少 20%。B 的 16 次采样覆盖平均下降至少 5 个百分点，两组采样方向一致。</td></tr>
     <tr><td>C2 方法试跑</td><td>C1 达标后启动。等预算下 B 平均领先最强对照至少 3 个百分点，两种子同向。A 增益损失最多 1.5 个百分点，还需通过成本与代理指标检验。</td></tr>
   </tbody></table>
-  <p>代码与协议已就绪，等待厂内真实运行。实验运行页读取本地进度文件，可显示训练步数、自由采样进度、种子与当前对照。</p>
+  <p>首次正式冒烟停在输入长度校验。厂内已用临时诊断包跑通四卡更新。新版在打包和 CPU 预检时使用同一分词器核验 768 token 上限，保留原开发题和锚点。正式四卡冒烟及 C1 等待新版数据包运行。</p>
+  <p>实验运行页读取本地进度文件，可显示训练步数、自由采样进度、种子与当前对照。</p>
   <p><a href="https://github.com/CathyMuo/work3/blob/main/docs/factory/continual_rlvr.md">厂内运行指南</a> · <a href="https://github.com/CathyMuo/work3/blob/main/research/protocols/continual_rlvr.md">冻结协议</a></p>
 </section>
 <details class="sec">

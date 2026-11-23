@@ -16,6 +16,8 @@ PARQUET_SHA = {"a": "2fb8483bf7a4ae9821bee1e715490fb8de5b59f0d2b58bd4de78cc75094
                "b": "75f1b1f63039044034fe75d22f51f77f257a79291d0084262bb43695d4aac971"}
 PARQUET_NAME = "train-00000-of-00001.parquet"
 SIZES = {"a_train": 2048, "a_dev": 128, "b_anchor": 128, "b_train": 768, "b_dev": 256}
+PROMPT_BOUND = 768
+BUNDLE_VERSION = 2
 LITERAL_RULES = {"validate_quotation", "validate_title", "validate_json_format"}
 WORDS = re.compile(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
 
@@ -34,6 +36,39 @@ def digest(text):
 
 def canonical(text):
     return " ".join(text.casefold().split())
+
+
+def load_prompt_tokenizer(model):
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(Path(model).resolve(strict=True), local_files_only=True, use_fast=True)
+
+
+def tokenizer_fingerprint(model):
+    model = Path(model)
+    filenames = ("tokenizer.json", "tokenizer_config.json")
+    optional = ("vocab.json", "merges.txt", "special_tokens_map.json", "added_tokens.json", "chat_template.jinja")
+    paths = [model / name for name in filenames]
+    paths.extend(model / name for name in optional if (model / name).is_file())
+    return {path.name: sha256_file(path) for path in paths}
+
+
+def prompt_ids(tokenizer, case):
+    return tokenizer.apply_chat_template(
+        [{"role": "user", "content": case["prompt"]}], tokenize=True, add_generation_prompt=True)
+
+
+def prompt_audit(splits, tokenizer):
+    maxima = {}
+    for name, cases in splits.items():
+        max_tokens = 0
+        for case in cases:
+            count = len(prompt_ids(tokenizer, case))
+            if not 1 <= count <= PROMPT_BOUND:
+                raise ValueError(f"{name} prompt {case['id']} has {count} tokens, expected 1–{PROMPT_BOUND}")
+            max_tokens = max(max_tokens, count)
+        maxima[name] = max_tokens
+    return maxima
 
 
 def rational(value):
@@ -166,7 +201,7 @@ def normalize(task, raw):
     return {"id": digest(canonical(prompt)), "group": group, "task": task, "prompt": prompt, "target": target}
 
 
-def split_rows(rows, task):
+def split_rows(rows, task, tokenizer):
     groups = defaultdict(list)
     for raw in rows:
         case = normalize(task, raw)
@@ -181,15 +216,38 @@ def split_rows(rows, task):
         pool.append(case)
     pool.sort(key=lambda row: digest("work3-c-v1:" + row["id"]))
     sizes = {name: count for name, count in SIZES.items() if name.startswith(task)}
-    if len(pool) < sum(sizes.values()):
-        raise ValueError(f"task {task} has {len(pool)} eligible source questions, needs {sum(sizes.values())}")
+    required = sum(sizes.values())
+    if len(pool) < required:
+        raise ValueError(f"task {task} has {len(pool)} eligible source questions, needs {required}")
     offset = 0
-    result = {}
-    # Dev is selected first, before any training selection.
+    result, maxima, replacements = {}, {}, []
+    reserve = iter(pool[required:])
+    # Keep the original positions of valid cases across all splits. Replacements
+    # come only from groups outside those splits, in the same frozen order.
     for name in sorted(sizes, key=lambda name: not name.endswith("_dev")):
-        result[name] = pool[offset:offset + sizes[name]]
+        selected = []
+        for case in pool[offset:offset + sizes[name]]:
+            count = len(prompt_ids(tokenizer, case))
+            if not 1 <= count <= PROMPT_BOUND:
+                if not name.endswith("_train"):
+                    raise ValueError(f"{name} prompt {case['id']} has {count} tokens; frozen holdout cannot change")
+                removed_id, removed_tokens = case["id"], count
+                for candidate in reserve:
+                    count = len(prompt_ids(tokenizer, candidate))
+                    if 1 <= count <= PROMPT_BOUND:
+                        case = candidate
+                        break
+                else:
+                    raise ValueError(f"task {task} has insufficient token-eligible reserve questions")
+                replacements.append({
+                    "split": name, "removed_id": removed_id, "removed_tokens": removed_tokens,
+                    "replacement_id": case["id"], "replacement_tokens": count,
+                })
+            selected.append(case)
+            maxima[name] = max(maxima.get(name, 0), count)
+        result[name] = selected
         offset += sizes[name]
-    return result
+    return result, maxima, replacements
 
 
 def load_bundle(path):
@@ -197,6 +255,13 @@ def load_bundle(path):
         bundle = json.load(stream)
     if bundle["protocol"] != "continual_rlvr_v1" or set(bundle["splits"]) != set(SIZES):
         raise ValueError("unsupported data bundle")
+    if bundle.get("bundle_version") != BUNDLE_VERSION:
+        raise ValueError("expected data bundle version 2; repack both original parquet files using --model")
+    policy = bundle["prompt_policy"]
+    if (policy["max_tokens"] != PROMPT_BOUND or set(policy["split_max_tokens"]) != set(SIZES)
+            or any(type(count) is not int or not 1 <= count <= PROMPT_BOUND
+                   for count in policy["split_max_tokens"].values())):
+        raise ValueError("invalid prompt budget in data bundle")
     if set(bundle["sources"]) != set(SOURCES):
         raise ValueError("missing data provenance")
     for task, source in bundle["sources"].items():
@@ -225,20 +290,27 @@ def load_bundle(path):
 def pack(args):
     from pyarrow.parquet import ParquetFile
 
-    sources, splits = {}, {}
+    tokenizer = load_prompt_tokenizer(args.model)
+    sources, splits, maxima, replacements = {}, {}, {}, []
     for task in SOURCES:
         revision = getattr(args, task + "_revision")
         path = getattr(args, task)
         if revision != REVISIONS[task] or sha256_file(path) != PARQUET_SHA[task]:
             raise ValueError(f"task {task} requires its frozen upstream revision and parquet")
         rows = (row for batch in ParquetFile(path).iter_batches() for row in batch.to_pylist())
-        splits.update(split_rows(rows, task))
+        selected, task_maxima, task_replacements = split_rows(rows, task, tokenizer)
+        splits.update(selected)
+        maxima.update(task_maxima)
+        replacements.extend(task_replacements)
         sources[task] = {"name": SOURCES[task], "revision": revision,
                          "files": {PARQUET_NAME: PARQUET_SHA[task]}}
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    atomic_json(args.out, {"protocol": "continual_rlvr_v1", "sources": sources, "splits": splits})
+    policy = {"max_tokens": PROMPT_BOUND, "tokenizer_sha256": tokenizer_fingerprint(args.model),
+              "split_max_tokens": maxima, "replacements": replacements}
+    atomic_json(args.out, {"protocol": "continual_rlvr_v1", "bundle_version": BUNDLE_VERSION,
+                          "sources": sources, "prompt_policy": policy, "splits": splits})
     load_bundle(args.out)
-    print(json.dumps({"sha256": sha256_file(args.out), "sizes": SIZES}))
+    print(json.dumps({"sha256": sha256_file(args.out), "sizes": SIZES, "prompt_policy": policy}, indent=2))
 
 
 def main():
@@ -246,6 +318,7 @@ def main():
     for task in SOURCES:
         parser.add_argument(f"--{task}", type=Path, required=True, help="local train split parquet")
         parser.add_argument(f"--{task}-revision", required=True)
+    parser.add_argument("--model", type=Path, required=True, help="local Qwen2.5-3B-Instruct snapshot")
     parser.add_argument("--out", required=True, type=Path)
     pack(parser.parse_args())
 
