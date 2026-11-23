@@ -1,4 +1,25 @@
-<!-- Work 3 研究说明（看板“研究说明”页的正文）。这里是讲给导师听的版本；数字均有出处，改动请同步 DECISION_LOG。 -->
+<section class="hero">
+  <div class="kicker">工作三 · ICML 2027 方法论文</div>
+  <h1>训练当前任务时保留后续任务的可学性</h1>
+  <p class="lead">强化学习需要先采到能拿正奖励的解。训练数学任务 A 后，如果模型更难采到能通过指令约束的回答，下一阶段训练 B 就会失去部分反馈。我们要验证能否保护这些成功分支，让 B 在相同采样和更新预算下学得更好。</p>
+</section>
+<section class="sec">
+  <h2>方法与数据</h2>
+  <p>使用 Qwen2.5-3B-Instruct、公开数学题与公开程序可验证指令。首轮在厂内全程离线，用四张 H800。B 的一小部分训练题用于估计短前缀的续写成功率。在训练 A 时，只在估计的成功分支总概率低于预定下限时加保护约束。所有评估都从空白回答自由采样。</p>
+  <p>对照包括顺序训练、固定比例混训、按题重采样、完整成功轨迹回放和不加权前缀保护。目标是保住 A 的进展，同时提高 B 在相同步数后的成绩。主要近邻是 VISR 的成功支持重塑与 CPR 的持续训练提示回放。</p>
+</section>
+<section class="sec">
+  <h2>当前阶段与去留条件</h2>
+  <table><thead><tr><th>阶段</th><th>继续门槛</th></tr></thead><tbody>
+    <tr><td>C1 必要性</td><td>A 提升至少 5 个百分点，B 初始成功覆盖至少 20%。B 的 16 次采样覆盖平均下降至少 5 个百分点，两组采样方向一致。</td></tr>
+    <tr><td>C2 方法试跑</td><td>C1 达标后启动。等预算下 B 平均领先最强对照至少 3 个百分点，两种子同向。A 增益损失最多 1.5 个百分点，还需通过成本与代理指标检验。</td></tr>
+  </tbody></table>
+  <p>代码与协议已就绪，等待厂内真实运行。实验运行页读取本地进度文件，可显示训练步数、自由采样进度、种子与当前对照。</p>
+  <p><a href="https://github.com/CathyMuo/work3/blob/main/docs/factory/continual_rlvr.md">厂内运行指南</a> · <a href="https://github.com/CathyMuo/work3/blob/main/research/protocols/continual_rlvr.md">冻结协议</a></p>
+</section>
+<details class="sec">
+  <summary>历史研究说明 · Dr. Zero 与 Wikipedia 自博弈</summary>
+  <p>以下保留最初的研究说明。NCP 与 Wikipedia 双监督路线已收束。</p>
 <section class="hero">
   <div class="kicker">工作 3 · 方法论文 · 目标 ICML 2027</div>
   <h1>让自我进化的搜索智能体<br>只奖励“学得会”的题，而不是“碰运气”的题</h1>
@@ -174,3 +195,4 @@
     </div>
   </div>
 </section>
+</details>

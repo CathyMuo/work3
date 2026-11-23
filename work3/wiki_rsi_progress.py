@@ -21,7 +21,8 @@ PHASES = ("audit", "prepare", "preflight", "smoke", "replay", "w2a_prepare", "w2
           "w6_action_train_prepare", "w6_action_train", "w6_overnight_prepare", "w6_overnight",
           "w6_query_diagnosis", "w7_two_query", "w7_live_prepare", "w7_live", "switch_prepare", "switch",
           "switch_transfer_prepare", "switch_transfer", "w7_gap", "w7_reader", "w7_bridge",
-          "feedback_lock", "feedback_prepare", "feedback_mechanism", "feedback_pilot", "feedback_confirm")
+          "feedback_lock", "feedback_prepare", "feedback_mechanism", "feedback_pilot", "feedback_confirm",
+          "continual_smoke", "continual_necessity", "continual_method")
 STATES = ("running", "done", "failed", "blocked", "stalled")
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "outputs" / "wiki_rsi"
@@ -37,7 +38,7 @@ def progress_root():
 def atomic_json(path, data, mode=0o600):
     temporary = path.with_suffix(path.suffix + ".tmp")
     with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode),
-                   "w", encoding="utf-8") as stream:
+                   "w", encoding="utf-8", newline="\n") as stream:
         json.dump(data, stream, ensure_ascii=False, indent=2)
         stream.write("\n")
     temporary.replace(path)
@@ -209,6 +210,7 @@ def board_runs(root, now, limit=20, legacy_root=None):
                                         "hotpotqa_added", "2wikimultihopqa_added",
                                         "queries", "inference_gpus", "legacy_proposals", "corpus_rows",
                                         "generated_tokens", "prompt_tokens", "valid_triplets", "completion_jobs",
+                                        "seed_index", "arm_index",
                                         *FEEDBACK_METRICS}
                              and isinstance(value, (int, float))})
                 if phase.startswith("feedback_"):
