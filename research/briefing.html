@@ -1,5 +1,18 @@
 <section class="hero">
   <div class="kicker">工作三 · ICML 2027 方法论文</div>
+  <h1>学习何时检查，才能改善下一步决策</h1>
+  <p class="lead">代理可以检查环境来获取信息。我们关心的是哪些检查会让代理选择更好的行动，并以更少的步数完成任务。方案 B0 先在本地 ALFWorld 文本环境验证真实检查状态能否重复执行。</p>
+</section>
+<section class="sec">
+  <h2>当前进度</h2>
+  <p>方案 C 已完成正式四卡冒烟与 C1。数学 pass@1 从 28.91% 到 43.95%，后续指令任务两组 pass@16 各下降 1.17 个百分点，低于冻结的 5 点门槛。C1 为 NO-GO，C2 未启动。</p>
+  <p>B0 等待离线 CPU 预检。最多检查 240 个训练游戏。至少获得 100 个可重放、有行动后果的状态，覆盖至少三类且各至少 10 个，并锁定 200 个未运行的封存游戏，才进入下一阶段。</p>
+  <p>实验运行页会按已检查的游戏数刷新，显示合格数和终态。<a href="https://github.com/CathyMuo/work3/blob/main/docs/factory/decision_check_b0.md">B0 厂内指南</a> · <a href="https://github.com/CathyMuo/work3/blob/main/research/protocols/decision_check_b0.md">B0 冻结协议</a></p>
+</section>
+<details class="sec">
+<summary>历史方案 C · 训练当前任务时保留后续任务的可学性</summary>
+<section class="hero">
+  <div class="kicker">工作三 · ICML 2027 方法论文</div>
   <h1>训练当前任务时保留后续任务的可学性</h1>
   <p class="lead">强化学习需要先采到能拿正奖励的解。训练数学任务 A 后，如果模型更难采到能通过指令约束的回答，下一阶段训练 B 就会失去部分反馈。我们要验证能否保护这些成功分支，让 B 在相同采样和更新预算下学得更好。</p>
 </section>
@@ -14,10 +27,11 @@
     <tr><td>C1 必要性</td><td>A 提升至少 5 个百分点，B 初始成功覆盖至少 20%。B 的 16 次采样覆盖平均下降至少 5 个百分点，两组采样方向一致。</td></tr>
     <tr><td>C2 方法试跑</td><td>C1 达标后启动。等预算下 B 平均领先最强对照至少 3 个百分点，两种子同向。A 增益损失最多 1.5 个百分点，还需通过成本与代理指标检验。</td></tr>
   </tbody></table>
-  <p>首次正式冒烟停在输入长度校验。厂内已用临时诊断包跑通四卡更新。新版在打包和 CPU 预检时使用同一分词器核验 768 token 上限，保留原开发题和锚点。正式四卡冒烟及 C1 等待新版数据包运行。</p>
+  <p>r2 完成正式冒烟和 C1。C1 终态为 NO-GO，后续方法对照没有启动。</p>
   <p>实验运行页读取本地进度文件，可显示训练步数、自由采样进度、种子与当前对照。</p>
   <p><a href="https://github.com/CathyMuo/work3/blob/main/docs/factory/continual_rlvr.md">厂内运行指南</a> · <a href="https://github.com/CathyMuo/work3/blob/main/research/protocols/continual_rlvr.md">冻结协议</a></p>
 </section>
+</details>
 <details class="sec">
   <summary>历史研究说明 · Dr. Zero 与 Wikipedia 自博弈</summary>
   <p>以下保留最初的研究说明。NCP 与 Wikipedia 双监督路线已收束。</p>

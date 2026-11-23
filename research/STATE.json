@@ -2,15 +2,25 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-23",
-  "current_stage": "方案 C · 离线持续强化学习 C1",
-  "status": "C1 未启动。初版正式冒烟因训练提示超限而未完成；厂内诊断包已验证四卡更新。已修复按模型分词核验输入。",
-  "next_action": "使用本地模型和原 parquet 重建 v2 数据包，按原 768 token 上限逐条预检。四卡离线冒烟通过后运行 C1，达到原冻结门槛才运行 C2。",
+  "current_stage": "方案 C 已收束 · 方案 B0 等待离线预检",
+  "status": "四卡冒烟 GO。C1 正式 NO-GO，数学 pass@1 提高 15.04 个百分点，后续任务 pass@16 两组各下降 1.17 个百分点。C2 未启动。",
+  "next_action": "先用 CPU 核对 ALFWorld 文本游戏是否有可重放、有行动后果的检查状态。B0 达标后才另行冻结 GPU 方法试点。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
     "decide_by": "2026-12-15"
   },
   "experiment_results": [
+    {
+      "id": "CONTINUAL_RLVR_C1",
+      "date": "2026-11-23",
+      "release": "c2bb976",
+      "verdict": "NO-GO",
+      "a_pass1_gain": 0.150390625,
+      "b_pass16_drops": [0.01171875, 0.01171875],
+      "b_paired_interval": [-0.015625, 0.037109375],
+      "note": "Complete official r2 run. C2 did not start."
+    },
     {
       "id": "P0",
       "date": "2026-11-13",
@@ -84,6 +94,10 @@
   ],
   "repository": "https://github.com/CathyMuo/work3 (public; renamed from work3_byd on 2026-11-06; method code public)",
   "frozen_gates": {
+    "DECISION_CHECK_B0": {
+      "file": "research/protocols/decision_check_b0.md",
+      "rule": "At least 100 qualified replayable training games, at least 3 types with 10 each, and 200 isolated heldout games."
+    },
     "CONTINUAL_RLVR": {
       "file": "research/protocols/continual_rlvr.md",
       "rule": "C1 A +5pp, B initial pass@16 >= 20%, B loses 5pp with repeat agreement. C2 equal-budget stage-B +3pp, both seeds positive, A loss <= 1.5pp, cost and proxy gates."

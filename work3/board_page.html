@@ -394,7 +394,8 @@ const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", prefligh
   w7_bridge:"同预算跨页证据选择", feedback_lock:"1. 冻结输入与留出题",
   feedback_prepare:"2. 生成双监督样本", feedback_mechanism:"3. 检查点 × 监督四臂",
   feedback_pilot:"4. 动态分配与静态对照", feedback_confirm:"5. 独立自然题确认",
-  continual_smoke:"四卡冒烟", continual_necessity:"C1 · 后续任务成功覆盖", continual_method:"C2 · 方法对照"};
+  continual_smoke:"四卡冒烟", continual_necessity:"C1 · 后续任务成功覆盖", continual_method:"C2 · 方法对照",
+  decision_check:"B0 · 检查动作可重放性预检"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   scanning_title_catalog:"核对原 Wikipedia 语料的可见标题",
@@ -448,7 +449,10 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   continual_train_b:"训练指令任务 B", continual_eval_a:"自由采样评估数学题（第 1 卡）",
   continual_eval_b:"自由采样评估指令题（第 1 卡）", continual_anchor_bank:"校验成功前缀与续写（第 1 卡）",
   continual_incomplete:"运行未完成，查看终端和 incomplete.json",
-  continual_go:"达到当前阶段门槛", continual_no_go:"未达到当前阶段门槛"};
+  continual_go:"达到当前阶段门槛", continual_no_go:"未达到当前阶段门槛",
+  decision_check_inputs:"核对离线训练任务和封存切分", decision_check_replay:"逐游戏重放并测两个分支",
+  decision_check_go:"可重放状态达到门槛", decision_check_no_go:"可重放状态未达到门槛",
+  decision_check_incomplete:"预检未完成，查看终端和 incomplete.json"};
 const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   "2wikimultihopqa":"2Wiki 候选 / 可回放", hotpotqa_added:"HotpotQA 缓存新增候选",
   "2wikimultihopqa_added":"2Wiki 缓存新增候选", valid_triplets:"三臂格式均有效",
@@ -457,7 +461,7 @@ const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   corpus_rows:"已扫描语料行数",
   generated_tokens:"生成 token", prompt_tokens:"输入 token", wall_seconds:"运行秒数",
   verified_pairs:"已核验双监督", train_steps:"训练步数", validation_cases:"评估题量",
-  active_gpus:"活动 GPU", seed_index:"种子序号", arm_index:"当轮对照序号"};
+  active_gpus:"活动 GPU", seed_index:"种子序号", arm_index:"当轮对照序号", eligible_games:"合格状态"};
 
 function renderWikiWorkers(workers = []) {
   return workers.map(worker => {
@@ -478,12 +482,14 @@ function renderWiki(target, runs, title) {
     (runs.length ? runs.map((run, index) => {
       const feedback = run.id.startsWith("feedback-");
       const continual = run.id.startsWith("continual-");
+      const decision = run.id.startsWith("decision-check-");
       const rows = Object.entries(wikiPhases).filter(([key]) =>
-        key.startsWith("feedback_") === feedback && key.startsWith("continual_") === continual)
+        key.startsWith("feedback_") === feedback && key.startsWith("continual_") === continual &&
+        (key === "decision_check") === decision)
         .map(([key, label]) => {
         const row = run.phases[key] || {state:"pending", metrics:{}};
-        const status = (feedback || continual) && row.state === "blocked" ? "NO-GO" :
-          (feedback || continual) && row.state === "done" ? "GO" : row.state === "blocked" ? "等待输入条件" :
+        const status = (feedback || continual || decision) && row.state === "blocked" ? "NO-GO" :
+          (feedback || continual || decision) && row.state === "done" ? "GO" : row.state === "blocked" ? "等待输入条件" :
           row.state === "stalled" ? "⚠ 可能卡住" : STATE[row.state];
         const units = row.total ? row.done + " / " + row.total : "—";
         const progress = row.total ? '<br><progress aria-label="' + esc(label) + '" value="' +

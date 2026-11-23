@@ -1,6 +1,6 @@
 # Work 3
 
-**2026-11-23 当前实验为离线持续强化学习 C1，等待厂内运行。** [启动指南](docs/factory/continual_rlvr.md) · [冻结协议](research/protocols/continual_rlvr.md) · [研究计划](research/EXPERIMENT_PLAN.md)
+**2026-11-23 C1 正式 NO-GO，下一步为 B0 离线环境预检。** [B0 启动指南](docs/factory/decision_check_b0.md) · [B0 冻结协议](research/protocols/decision_check_b0.md) · [研究计划](research/EXPERIMENT_PLAN.md)
 
 历史 Wikipedia 研究已经收束。P0 通过，P1 NO-GO，NCP 已停止，P2 已取消。微批次消融完成，判定 NO EVIDENCE。
 
