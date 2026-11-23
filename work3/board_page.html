@@ -391,7 +391,9 @@ const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", prefligh
   switch_prepare:"正式方法 真实索引构造配对", switch:"正式方法 四卡训练对照",
   switch_transfer_prepare:"复用已核验的取证配对", switch_transfer:"四卡训练与自然题查询重排",
   w7_gap:"缺失事实补查 同预算对照", w7_reader:"固定检索后的证据呈现对照",
-  w7_bridge:"同预算跨页证据选择"};
+  w7_bridge:"同预算跨页证据选择", feedback_lock:"1. 冻结输入与留出题",
+  feedback_prepare:"2. 生成双监督样本", feedback_mechanism:"3. 检查点 × 监督四臂",
+  feedback_pilot:"4. 动态分配与静态对照", feedback_confirm:"5. 独立自然题确认"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   scanning_title_catalog:"核对原 Wikipedia 语料的可见标题",
@@ -425,23 +427,51 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   smoke_required:"等待相同运行配置的四题冒烟",
   insufficient_candidates:"W0 候选数未达到门槛",
   insufficient_pairs:"有效准备对数未达到完整回放门槛", FileNotFoundError:"缺少输入文件，请看启动终端",
-  ValueError:"输入校验失败，请看启动终端", RuntimeError:"运行失败，请看启动终端"};
+  ValueError:"输入校验失败，请看启动终端", RuntimeError:"运行失败，请看启动终端",
+  feedback_setup:"读取冻结协议与输入", feedback_split:"冻结互斥的支持页分组",
+  feedback_scan:"扫描原 Wikipedia 快照并采样源页", feedback_models:"核对模型与检索版本",
+  feedback_cache_schedule:"缓存调度题的真实首查", feedback_cache_development:"缓存开发题首查",
+  feedback_cache_confirmation:"缓存封存确认题首查", feedback_workers:"四卡任务",
+  feedback_loading:"加载检查点", feedback_generating:"生成题目并核验证据",
+  feedback_probe_search:"短更新 · 搜索监督", feedback_probe_read:"短更新 · 阅读监督",
+  feedback_score_search:"评估搜索更新", feedback_score_read:"评估阅读更新",
+  feedback_fixed_probe_budget:"固定对照训练", feedback_score_fixed:"匹配对照验证预算",
+  feedback_continuation:"继续训练", feedback_development:"开发集真实检索及作答",
+  feedback_confirm:"独立确认 · 真实检索及作答",
+  feedback_go:"通过冻结门槛", feedback_no_go:"未达标，终止后续阶段",
+  feedback_deadline:"达到阶段时间上限，结束实验", feedback_infra:"执行错误，检查本地 worker 日志"};
 const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   "2wikimultihopqa":"2Wiki 候选 / 可回放", hotpotqa_added:"HotpotQA 缓存新增候选",
   "2wikimultihopqa_added":"2Wiki 缓存新增候选", valid_triplets:"三臂格式均有效",
   completion_jobs:"生成请求", queries:"已执行检索查询", inference_gpus:"推理用卡",
   legacy_proposals:"已生成旧提示查询",
   corpus_rows:"已扫描语料行数",
-  generated_tokens:"生成 token", prompt_tokens:"输入 token", wall_seconds:"运行秒数"};
+  generated_tokens:"生成 token", prompt_tokens:"输入 token", wall_seconds:"运行秒数",
+  verified_pairs:"已核验双监督", train_steps:"训练步数", validation_cases:"已评分题数", active_gpus:"活动 GPU"};
+
+function renderWikiWorkers(workers = []) {
+  return workers.map(worker => {
+    const count = worker.total ? " " + worker.done + " / " + worker.total : "";
+    const age = worker.updated_at ? " · 上次更新 " +
+      hms(Math.max(0, Date.now() / 1000 - worker.updated_at)) + " 前" : "";
+    const metrics = Object.entries(worker.metrics).map(([name, value]) =>
+      (wikiMetrics[name] || name) + " " + value).join(" · ");
+    return '<div class="small mute">' + esc("GPU " + worker.device + " · " + worker.name + " · " +
+      (wikiDetails[worker.detail] || worker.detail) + count + (metrics ? " · " + metrics : "") + age) + "</div>";
+  }).join("");
+}
 
 function renderWiki(target, runs, title) {
   const opened = new Map([...target.querySelectorAll("details[data-wiki-run]")]
     .map(detail => [detail.dataset.wikiRun, detail.open]));
   target.innerHTML = '<div class="card"><h2>' + title + "</h2>" +
     (runs.length ? runs.map((run, index) => {
-      const rows = Object.entries(wikiPhases).map(([key, label]) => {
+      const feedback = run.id.startsWith("feedback-");
+      const rows = Object.entries(wikiPhases).filter(([key]) => key.startsWith("feedback_") === feedback)
+        .map(([key, label]) => {
         const row = run.phases[key] || {state:"pending", metrics:{}};
-        const status = row.state === "blocked" ? "等待输入条件" :
+        const status = feedback && row.state === "blocked" ? "NO-GO" :
+          feedback && row.state === "done" ? "GO" : row.state === "blocked" ? "等待输入条件" :
           row.state === "stalled" ? "⚠ 可能卡住" : STATE[row.state];
         const units = row.total ? row.done + " / " + row.total : "—";
         const progress = row.total ? '<br><progress aria-label="' + esc(label) + '" value="' +
@@ -454,7 +484,8 @@ function renderWiki(target, runs, title) {
           (row.dataset === "hotpotqa" ? "HotpotQA" : "2WikiMultiHopQA") : "";
         return "<tr><td>" + esc(label) + '</td><td class="' + esc(row.state) + '">' + esc(status) +
           "</td><td>" + units + progress + "</td><td>" + esc((wikiDetails[row.detail] || "") + dataset + age) +
-          (details ? '<div class="mute">' + details + "</div>" : "") + "</td></tr>";
+          (details ? '<div class="mute">' + details + "</div>" : "") +
+          renderWikiWorkers(row.workers) + "</td></tr>";
       }).join("");
       const open = opened.has(run.id) ? opened.get(run.id) : index === 0;
       const started = run.started_at ? clock(run.started_at) : "—";

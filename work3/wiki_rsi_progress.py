@@ -20,7 +20,8 @@ PHASES = ("audit", "prepare", "preflight", "smoke", "replay", "w2a_prepare", "w2
           "w6_action_pilot_prepare", "w6_action_pilot",
           "w6_action_train_prepare", "w6_action_train", "w6_overnight_prepare", "w6_overnight",
           "w6_query_diagnosis", "w7_two_query", "w7_live_prepare", "w7_live", "switch_prepare", "switch",
-          "switch_transfer_prepare", "switch_transfer", "w7_gap", "w7_reader", "w7_bridge")
+          "switch_transfer_prepare", "switch_transfer", "w7_gap", "w7_reader", "w7_bridge",
+          "feedback_lock", "feedback_prepare", "feedback_mechanism", "feedback_pilot", "feedback_confirm")
 STATES = ("running", "done", "failed", "blocked", "stalled")
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "outputs" / "wiki_rsi"
@@ -56,7 +57,7 @@ class Progress:
         self.data = (json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists()
                      else {"schema_version": 1, "phases": {}})
 
-    def update(self, state, done=0, total=0, *, detail="", metrics=None, dataset=None):
+    def update(self, state, done=0, total=0, *, detail="", metrics=None, dataset=None, workers=None):
         now = int(time.time())
         with self.lock:
             phases = self.data["phases"]
@@ -71,6 +72,8 @@ class Progress:
                 "action_started_at": previous.get("action_started_at", now)
                     if previous.get("state") == state and previous.get("detail") == detail else now,
             }
+            if workers is not None:
+                phases[self.phase]["workers"] = workers
             self.data["updated_at"] = now
             atomic_json(self.path, self.data)
 
@@ -141,6 +144,32 @@ def legacy_audits(root):
     return runs
 
 
+FEEDBACK_METRICS = {"verified_pairs", "train_steps", "validation_cases", "queries", "prompt_tokens", "active_gpus"}
+
+
+def board_workers(rows):
+    result = []
+    if not isinstance(rows, list):
+        return result
+    for row in rows[:4]:
+        if not isinstance(row, dict):
+            continue
+        done, total = row.get("done", 0), row.get("total", 0)
+        device, name = row.get("device", ""), row.get("name", "")
+        if (not all(isinstance(value, str) for value in (device, name)) or
+                not re.fullmatch(r"[0-9]{1,3}", device) or not re.fullmatch(r"[\w-]{1,40}", name) or
+                type(done) is not int or type(total) is not int or not 0 <= done <= total):
+            continue
+        metrics = row.get("metrics")
+        stamp = row.get("updated_at")
+        result.append({"name": name, "device": device, "done": done, "total": total,
+                       "detail": str(row.get("detail", "feedback_loading"))[:80],
+                       "updated_at": stamp if type(stamp) is int else None,
+                       "metrics": {k: v for k, v in metrics.items() if k in FEEDBACK_METRICS and type(v) is int}
+                       if isinstance(metrics, dict) else {}})
+    return result
+
+
 def board_runs(root, now, limit=20, legacy_root=None):
     runs = []
     for directory in root.iterdir() if root.is_dir() else ():
@@ -179,8 +208,11 @@ def board_runs(root, now, limit=20, legacy_root=None):
                              if key in {"hotpotqa", "2wikimultihopqa", "wall_seconds",
                                         "hotpotqa_added", "2wikimultihopqa_added",
                                         "queries", "inference_gpus", "legacy_proposals", "corpus_rows",
-                                        "generated_tokens", "prompt_tokens", "valid_triplets", "completion_jobs"}
+                                        "generated_tokens", "prompt_tokens", "valid_triplets", "completion_jobs",
+                                        *FEEDBACK_METRICS}
                              and isinstance(value, (int, float))})
+                if phase.startswith("feedback_"):
+                    phases[phase]["workers"] = board_workers(row.get("workers"))
             runs.append(run_view(directory.name, data["updated_at"], phases))
         except (OSError, ValueError, KeyError, AttributeError, TypeError):
             continue
