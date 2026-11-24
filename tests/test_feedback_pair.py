@@ -1,11 +1,14 @@
+import hashlib
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from time import time
+from unittest.mock import patch
 
 from work3.feedback_pair import initial_row, join, plan_repairs
-from work3.feedback_pair_data import Verifier, clean_code, similar_input, split_tests
+from work3.feedback_pair_data import DATA_REVISION, Verifier, clean_code, similar_input, split_tests, verify_source
 from work3.feedback_pair_metrics import BRANCHES, PAIRS, REPEATS, choose, collect_scored, fit
 from work3.wiki_rsi_progress import Progress, board_runs
 
@@ -96,6 +99,33 @@ class FeedbackPairTests(unittest.TestCase):
     def test_failure_to_start_isolation_is_not_a_wrong_answer(self):
         with self.assertRaisesRegex(RuntimeError, "isolated Python did not start"):
             Verifier.run_case([sys.executable, "-c", "import sys; sys.exit(1)"], "1", "2")
+
+    def test_network_check_does_not_waive_read_only_mounts(self):
+        verifier = Verifier.__new__(Verifier)
+        with patch("work3.feedback_pair_data.os.readlink", return_value="net:[1]"), \
+                patch.object(verifier, "evaluate", return_value=([("wrong", "expected a read-only mount: /")], 1, 0)) as run:
+            with self.assertRaisesRegex(RuntimeError, "read-only mount"):
+                verifier.probe()
+        self.assertIn("os.statvfs", run.call_args.args[0])
+        self.assertIn("/proc/self/mountinfo", run.call_args.args[0])
+
+    def test_verify_source_pins_content_before_execution(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "data").mkdir()
+            files = {f"train-{i:05d}.parquet": {"bytes": 1, "sha256": hashlib.sha256(b"x").hexdigest()}
+                     for i in range(39)}
+            manifest = root / "lock.json"
+            manifest.write_text(json.dumps({"revision": DATA_REVISION, "shards": files}), encoding="utf-8")
+            with patch("work3.feedback_pair_data.SHARD_MANIFEST", manifest):
+                with self.assertRaisesRegex(ValueError, "0/39"):
+                    verify_source(root)
+                for name in files:
+                    (root / "data" / name).write_bytes(b"x")
+                self.assertEqual(verify_source(root)["verified_shards"], 39)
+                (root / "data" / next(iter(files))).write_bytes(b"y")
+                with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                    verify_source(root)
 
 
 if __name__ == "__main__":

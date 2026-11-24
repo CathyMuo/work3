@@ -3,8 +3,8 @@
   "project": "work3",
   "updated_at": "2026-11-24",
   "current_stage": "可验证反馈组合 · 首筛协议冻结",
-  "status": "已实现离线数据准备、四卡首答与交叉修复、选择器和独立评分。等待数据准备和真实冒烟。",
-  "next_action": "核对 CodeContests 原训练分片与执行环境；训练和封存均达到数据门槛后，运行冒烟和正式首筛。",
+  "status": "CodeContests 冻结训练分片待厂内验收；正式判分环境待通过增强的实际隔离预检。无方法结果。",
+  "next_action": "并行验收 39 个数据分片与执行环境。CPU 准备通过后运行四卡冒烟，按原冻结协议推进。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",

@@ -3,6 +3,7 @@
 import ast
 import hashlib
 import itertools
+import json
 import os
 import re
 import shutil
@@ -23,7 +24,7 @@ DRAW_CAP = 1152  # per split, after CPU reference checks
 SCORE_CASES = 8
 FEEDBACK_CASES = 12
 TEXT_CAP = 192
-SHARD = re.compile(r"train-(\d{5})-of-00039-[a-f0-9]{16}\.parquet")
+SHARD_MANIFEST = Path(__file__).resolve().parents[1] / "research/protocols/feedback_pair_codecontests_shards.json"
 FIELDS = ("name", "description", "cf_contest_id", "solutions", "public_tests", "private_tests",
           "generated_tests", "input_file", "output_file")
 MULTIPLE_OUTPUTS = re.compile(r"(?:print|output) any (?:one|valid|possible|of)|multiple (?:correct|valid) (?:answers|solutions)", re.I)
@@ -83,17 +84,38 @@ def clean_code(text):
     return code if tree.body else None
 
 
+def verify_source(source):
+    lock = json.loads(SHARD_MANIFEST.read_text(encoding="utf-8"))
+    expected = lock["shards"]
+    if lock["revision"] != DATA_REVISION or len(expected) != 39:
+        raise ValueError("incorrect registered CodeContests shard manifest")
+    directory = source / "data"
+    found = {path.name for path in directory.glob("train-*.parquet") if path.is_file()}
+    missing, unexpected = expected.keys() - found, found - expected.keys()
+    if missing or unexpected:
+        raise ValueError(f"CodeContests train shards under {directory}: {len(found)}/39, "
+                         f"{len(missing)} missing {sorted(missing)[:4]}, "
+                         f"{len(unexpected)} unexpected {sorted(unexpected)[:4]}")
+    fingerprints = {}
+    for name, descriptor in expected.items():
+        path = directory / name
+        if path.stat().st_size != descriptor["bytes"]:
+            raise ValueError(f"CodeContests shard size mismatch: {name}")
+        fingerprint = sha256_file(path)
+        if fingerprint != descriptor["sha256"]:
+            raise ValueError(f"CodeContests shard SHA-256 mismatch: {name}")
+        fingerprints[name] = fingerprint
+    return {"dataset_revision": DATA_REVISION, "verified_shards": len(fingerprints),
+            "size_bytes": sum(value["bytes"] for value in expected.values()), "shards": fingerprints}
+
+
 def read_rows(source):
     from pyarrow.parquet import ParquetFile
 
-    shards = sorted((source / "data").glob("train-*.parquet"))
-    matches = [SHARD.fullmatch(path.name) for path in shards]
-    if any(match is None for match in matches) or [int(m[1]) for m in matches] != list(range(39)):
-        raise ValueError("expected all 39 original train shards under SOURCE/data")
+    fingerprints = verify_source(source)["shards"]
     kept = {}
-    fingerprints = {}
-    for path in shards:
-        fingerprints[path.name] = sha256_file(path)
+    for name in sorted(fingerprints):
+        path = source / "data" / name
         for batch in ParquetFile(path).iter_batches(batch_size=16, columns=FIELDS):
             for raw in batch.to_pylist():
                 task = task_from_raw(raw)
@@ -184,10 +206,35 @@ class Verifier:
 
     def probe(self):
         namespace = os.readlink("/proc/self/ns/net")
-        code = ("import os, sys\nassert not os.path.exists('/home')\n"
-                f"assert os.readlink('/proc/self/ns/net') != {namespace!r}\nprint(sys.stdin.read().strip())")
-        if self.evaluate(code, [("work3-isolation\n", "work3-isolation")])[0] != [("pass", "work3-isolation")]:
-            raise RuntimeError("Bubblewrap failed the actual isolated execution probe")
+        code = f"""import os, stat, sys
+def verify():
+    if os.path.exists('/home'):
+        return 'host home is visible'
+    for path in ('/', '/usr', '/submission.py'):
+        if not os.statvfs(path).f_flag & os.ST_RDONLY:
+            return f'expected a read-only mount: {{path}}'
+    try:
+        with open('/proc/self/mountinfo') as stream:
+            if not any(' - proc proc ' in line for line in stream):
+                return 'real procfs is missing'
+        if os.readlink('/proc/self/ns/net') == {namespace!r}:
+            return 'network namespace is not isolated'
+        for path in ('/dev/null', '/dev/zero'):
+            if not stat.S_ISCHR(os.stat(path).st_mode):
+                return f'expected a character device: {{path}}'
+    except OSError:
+        return 'required procfs or device interfaces are missing'
+    return sys.stdin.read().strip()
+print(verify())
+"""
+        try:
+            [(status, detail)], _, _ = self.evaluate(code, [("work3-isolation\n", "work3-isolation")])
+        except (OSError, RuntimeError) as exc:
+            raise RuntimeError(f"Bubblewrap preflight failed: {exc}. Use an approved Linux execution environment "
+                               "that supports the registered Bubblewrap setup.") from exc
+        if status != "pass":
+            raise RuntimeError(f"Bubblewrap isolation preflight rejected the verifier: {detail or status}. "
+                               "Use an approved Linux execution environment with read-only mounts, procfs, and isolation.")
 
     def version(self):
         return {"bubblewrap": subprocess.check_output([self.bwrap, "--version"], text=True, timeout=5).strip(),

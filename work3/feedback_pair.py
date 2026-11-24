@@ -16,7 +16,7 @@ from time import monotonic, sleep, time
 from work3.budget_rlvr import stop, stop_workers
 from work3.continual_rlvr_data import load_prompt_tokenizer, sha256_file, tokenizer_fingerprint
 from work3.feedback_pair_data import (DATA_REVISION, DRAW_CAP, PROTOCOL, TARGET, Verifier, check_references,
-                                      clean_code, read_rows)
+                                      clean_code, read_rows, verify_source)
 from work3.feedback_pair_metrics import (BRANCHES, OUTPUT_CAP, REPEATS, TOKEN_CAP, collect_scored, job_seed,
                                          order_key, panel, prompt)
 from work3.wiki_rsi_progress import REPO, Progress, atomic_json, progress_root
@@ -374,7 +374,7 @@ def main():
     os.environ.update(HF_HUB_OFFLINE="1", HF_DATASETS_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
                       HF_HUB_DISABLE_TELEMETRY="1", TOKENIZERS_PARALLELISM="false")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("prepare", "smoke", "pilot", "worker"))
+    parser.add_argument("phase", choices=("verify-source", "prepare", "smoke", "pilot", "worker"))
     parser.add_argument("--id")
     parser.add_argument("--source", type=Path)
     parser.add_argument("--model", type=Path)
@@ -388,10 +388,13 @@ def main():
     if args.phase == "worker":
         rank_worker(args)
         return
+    if args.phase in ("verify-source", "prepare") and args.source is None:
+        parser.error(f"{args.phase} requires --source")
+    if args.phase == "verify-source":
+        print(json.dumps(verify_source(args.source), ensure_ascii=False, indent=2))
+        return
     if not RUN_ID.fullmatch(args.id or ""):
         parser.error("--id must be a fresh pair-repair-<name>")
-    if args.phase == "prepare" and args.source is None:
-        parser.error("prepare requires --source")
     if args.phase in LIMITS and (args.model is None or args.manifest is None):
         parser.error("smoke/pilot require --model and --manifest")
     if args.phase == "pilot" and not RUN_ID.fullmatch(args.smoke_run or ""):

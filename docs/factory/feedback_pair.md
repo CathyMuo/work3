@@ -1,11 +1,11 @@
 # 厂内运行 可验证反馈组合首筛
 
-运行分三步。CPU 准备完成且为 `READY` 后启动四卡冒烟，冒烟 `PASS` 后启动正式首筛。使用 [冻结协议](../../research/protocols/feedback_pair.md) 的门槛。模型权重全程冻结。
+先验收离线数据，再执行 CPU 准备。CPU 准备完成且为 `READY` 后启动四卡冒烟，冒烟 `PASS` 后启动正式首筛。使用 [冻结协议](../../research/protocols/feedback_pair.md) 的门槛。模型权重全程冻结。
 
 ## 离线输入
 
-- 在可联网机器上准备固定数据快照和本地模型目录，按现有流程把文件转入厂内。CodeContests 原训练分片约 8 GB。保留 `data/train-*-of-00039-*.parquet` 的文件名及 39 个实体文件。数据由 [DeepMind CodeContests](https://huggingface.co/datasets/deepmind/code_contests) 发放。
-- Linux 需要 `/usr/bin/python3`、系统 `bwrap` 和允许隔离命名空间的执行环境。`prepare` 实际探测隔离，确认通过才运行候选代码。实验 Python 需有本地 `pyarrow`、`numpy`、`torch`、`transformers`、`tokenizers`、`safetensors`。使用上一轮已可离线加载的 Qwen2.5-3B-Instruct 本地目录，冒烟冻结其实际文件指纹。
+- 在可联网机器上准备固定数据快照和本地模型目录，按现有流程把文件转入厂内。CodeContests 原训练分片共 39 个、7,509,753,086 字节。原文件名、大小和 SHA-256 通过[官方分片清单](../../research/protocols/feedback_pair_codecontests_shards.json)核对。保留 `data/` 下的 39 个实体文件。 [DeepMind CodeContests](https://huggingface.co/datasets/deepmind/code_contests)
+- 参考执行和候选判分需要经管理员批准的 Linux 隔离环境、`/usr/bin/python3` 与系统 `bwrap`。预检逐项核验只读挂载、进程文件系统、设备类型和网络隔离，通过后才运行提交程序。`prepare`、`smoke`、`pilot` 使用同一个已验证的执行器和 Python 环境；预检失败时交由平台管理员提供支持该隔离接口的环境。实验 Python 需有本地 `pyarrow`、`numpy`、`torch`、`transformers`、`tokenizers`、`safetensors`。使用上一轮已可离线加载的 Qwen2.5-3B-Instruct 本地目录，冒烟冻结其实际文件指纹。
 
 联网机器上下载数据的命令如下。
 
@@ -23,6 +23,8 @@ export WIKI_RSI_ROOT="$PWD/outputs/wiki_rsi"
 DATA=/path/to/code_contests
 MODEL=/path/to/Qwen2.5-3B-Instruct
 
+bash scripts/run_feedback_pair.sh verify-source --source "$DATA"
+
 bash scripts/run_feedback_pair.sh prepare \
   --id pair-repair-prep-v1 --source "$DATA"
 
@@ -35,7 +37,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/run_feedback_pair.sh pilot \
   --smoke-run pair-repair-smoke-v1
 ```
 
-`prepare` 可通过 `--cpu-jobs` 配置并行度，默认 12。正式实验上限 12 小时，实际耗时由冒烟和合格任务数决定。四卡分别运行同一模型副本。看板显示 CPU 参考检查、首答采集、修复采样、分卡进度及最终判定。分阶段百分比以当前工作量为分母。
+`verify-source` 只读取数据文件并校验摘要，可以在接收机器先运行，确认 `verified_shards` 为 39。`prepare` 可通过 `--cpu-jobs` 配置并行度，默认 12。正式实验上限 12 小时，实际耗时由冒烟和合格任务数决定。四卡分别运行同一模型副本。看板显示 CPU 参考检查、首答采集、修复采样、分卡进度及最终判定。分阶段百分比以当前工作量为分母。
 
 ## 回传
 
