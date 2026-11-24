@@ -2,9 +2,9 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-24",
-  "current_stage": "预算受限 RLVR · 正式试点 NO-GO",
-  "status": "四卡冒烟通过，正式面板完成 2,048 条。可恢复新信号 22.12%，同成本估计的 RMSE 为全长对照的 2.003 倍。路线收束。",
-  "next_action": "保留自然全长采样为后续预算问题的强基线。当前无待执行的新训练或试验。",
+  "current_stage": "可验证反馈组合 · 首筛协议冻结",
+  "status": "已实现离线数据准备、四卡首答与交叉修复、选择器和独立评分。等待数据准备和真实冒烟。",
+  "next_action": "核对 CodeContests 原训练分片与执行环境；训练和封存均达到数据门槛后，运行冒烟和正式首筛。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -125,6 +125,10 @@
   ],
   "repository": "https://github.com/CathyMuo/work3 (public; renamed from work3_byd on 2026-11-06; method code public)",
   "frozen_gates": {
+    "FEEDBACK_PAIR": {
+      "file": "research/protocols/feedback_pair.md",
+      "rule": "384 eligible train and 384 eligible sealed tasks; >=5pp over strongest registered control, positive simultaneous clustered intervals and all-failure gain, and <=103% actual generation token cost."
+    },
     "BUDGET_RLVR_PAIRED_PILOT": {
       "file": "research/protocols/budget_rlvr_paired_pilot.md",
       "rule": "2048 complete rows, late rescue >= 5%, expected rollout token ratio <= 1.03, and RMSE at least 20% lower than the strongest comparator."

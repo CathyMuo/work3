@@ -395,7 +395,8 @@ const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", prefligh
   feedback_prepare:"2. 生成双监督样本", feedback_mechanism:"3. 检查点 × 监督四臂",
   feedback_pilot:"4. 动态分配与静态对照", feedback_confirm:"5. 独立自然题确认",
   continual_smoke:"四卡冒烟", continual_necessity:"C1 · 后续任务成功覆盖", continual_method:"C2 · 方法对照",
-  decision_check:"B0 · 检查动作可重放性预检", budget_rlvr:"预算受限 RLVR · 同前缀两分支试点"};
+  decision_check:"B0 · 检查动作可重放性预检", budget_rlvr:"预算受限 RLVR · 同前缀两分支试点",
+  pair_repair:"可验证反馈组合 · 四格修复"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   scanning_title_catalog:"核对原 Wikipedia 语料的可见标题",
@@ -457,7 +458,13 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   budget_rlvr_preflight:"核对冻结模型、题目与依赖", budget_rlvr_sampling:"四卡采样并比对短答和长续写",
   budget_rlvr_comparing:"按题交叉拟合并核对同成本误差", budget_rlvr_pass:"四卡分叉冒烟通过",
   budget_rlvr_go:"达到试点冻结门槛", budget_rlvr_no_go:"试点未达到冻结门槛",
-  budget_rlvr_incomplete:"试点未完成，查看分卡日志和 incomplete.json"};
+  budget_rlvr_incomplete:"试点未完成，查看分卡日志和 incomplete.json",
+  pair_source:"读取固定数据分片", pair_references:"执行参考程序并核对反馈与评分用例",
+  pair_preflight:"校验离线数据、模型和执行器", pair_initial:"四卡采集真实首答和反馈结果",
+  pair_repair:"四卡生成并独立判分", pair_analyze:"拟合选择器并比较封存结果",
+  pair_ready:"数据准备完成", pair_pass:"四格冒烟通过", pair_go:"达到首筛门槛",
+  pair_data_no_go:"真实失败配对或数据量未达门槛", pair_no_go:"未达到方法门槛",
+  pair_incomparable:"预算读数失配", pair_incomplete:"运行中断，查看分卡日志"};
 const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   "2wikimultihopqa":"2Wiki 候选 / 可回放", hotpotqa_added:"HotpotQA 缓存新增候选",
   "2wikimultihopqa_added":"2Wiki 缓存新增候选", valid_triplets:"三臂格式均有效",
@@ -490,14 +497,18 @@ function renderWiki(target, runs, title) {
       const continual = run.id.startsWith("continual-");
       const decision = run.id.startsWith("decision-check-");
       const budget = run.id.startsWith("budget-rlvr-");
+      const pair = run.id.startsWith("pair-repair-");
       const rows = Object.entries(wikiPhases).filter(([key]) =>
         key.startsWith("feedback_") === feedback && key.startsWith("continual_") === continual &&
-        (key === "decision_check") === decision && (key === "budget_rlvr") === budget)
+        (key === "decision_check") === decision && (key === "budget_rlvr") === budget &&
+        (key === "pair_repair") === pair)
         .map(([key, label]) => {
         const row = run.phases[key] || {state:"pending", metrics:{}};
-        const gated = feedback || continual || decision || budget;
-        const status = (decision || budget) && row.state === "failed" ? "INCOMPLETE" :
-          budget && row.detail === "budget_rlvr_pass" ? "PASS" :
+        const gated = feedback || continual || decision || budget || pair;
+        const status = (decision || budget || pair) && row.state === "failed" ? "INCOMPLETE" :
+          (row.detail === "budget_rlvr_pass" || row.detail === "pair_pass") ? "PASS" :
+          row.detail === "pair_ready" ? "READY" : row.detail === "pair_data_no_go" ? "DATA-NO-GO" :
+          row.detail === "pair_incomparable" ? "INCOMPARABLE" :
           gated && row.state === "blocked" ? "NO-GO" :
           gated && row.state === "done" ? "GO" : row.state === "blocked" ? "等待输入条件" :
           row.state === "stalled" ? "⚠ 可能卡住" : STATE[row.state];

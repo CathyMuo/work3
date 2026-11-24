@@ -22,7 +22,7 @@ PHASES = ("audit", "prepare", "preflight", "smoke", "replay", "w2a_prepare", "w2
           "w6_query_diagnosis", "w7_two_query", "w7_live_prepare", "w7_live", "switch_prepare", "switch",
           "switch_transfer_prepare", "switch_transfer", "w7_gap", "w7_reader", "w7_bridge",
           "feedback_lock", "feedback_prepare", "feedback_mechanism", "feedback_pilot", "feedback_confirm",
-          "continual_smoke", "continual_necessity", "continual_method", "decision_check", "budget_rlvr")
+          "continual_smoke", "continual_necessity", "continual_method", "decision_check", "budget_rlvr", "pair_repair")
 STATES = ("running", "done", "failed", "blocked", "stalled")
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "outputs" / "wiki_rsi"
@@ -213,7 +213,7 @@ def board_runs(root, now, limit=20, legacy_root=None):
                                         "seed_index", "arm_index", "eligible_games", "rollout_tokens", "long_branches",
                                         *FEEDBACK_METRICS}
                              and isinstance(value, (int, float))})
-                if phase.startswith("feedback_"):
+                if phase.startswith("feedback_") or phase == "pair_repair":
                     phases[phase]["workers"] = board_workers(row.get("workers"))
             runs.append(run_view(directory.name, data["updated_at"], phases))
         except (OSError, ValueError, KeyError, AttributeError, TypeError):
