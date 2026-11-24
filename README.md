@@ -1,6 +1,6 @@
 # Work 3
 
-**2026-11-24 B0 已归档为 INCOMPLETE 221/240，冻结门槛不可达。** [B0 归档说明](docs/factory/decision_check_b0.md) · [B0 冻结协议](research/protocols/decision_check_b0.md) · [研究计划](research/EXPERIMENT_PLAN.md)
+**2026-11-24 当前为预算受限 RLVR 同前缀试点。** [厂内运行指南](docs/factory/budget_rlvr_paired_pilot.md) · [冻结协议](research/protocols/budget_rlvr_paired_pilot.md) · [研究计划](research/EXPERIMENT_PLAN.md)
 
 历史 Wikipedia 研究已经收束。P0 通过，P1 NO-GO，NCP 已停止，P2 已取消。微批次消融完成，判定 NO EVIDENCE。
 

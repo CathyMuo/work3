@@ -22,7 +22,7 @@ PHASES = ("audit", "prepare", "preflight", "smoke", "replay", "w2a_prepare", "w2
           "w6_query_diagnosis", "w7_two_query", "w7_live_prepare", "w7_live", "switch_prepare", "switch",
           "switch_transfer_prepare", "switch_transfer", "w7_gap", "w7_reader", "w7_bridge",
           "feedback_lock", "feedback_prepare", "feedback_mechanism", "feedback_pilot", "feedback_confirm",
-          "continual_smoke", "continual_necessity", "continual_method", "decision_check")
+          "continual_smoke", "continual_necessity", "continual_method", "decision_check", "budget_rlvr")
 STATES = ("running", "done", "failed", "blocked", "stalled")
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "outputs" / "wiki_rsi"
@@ -210,7 +210,7 @@ def board_runs(root, now, limit=20, legacy_root=None):
                                         "hotpotqa_added", "2wikimultihopqa_added",
                                         "queries", "inference_gpus", "legacy_proposals", "corpus_rows",
                                         "generated_tokens", "prompt_tokens", "valid_triplets", "completion_jobs",
-                                        "seed_index", "arm_index", "eligible_games",
+                                        "seed_index", "arm_index", "eligible_games", "rollout_tokens", "long_branches",
                                         *FEEDBACK_METRICS}
                              and isinstance(value, (int, float))})
                 if phase.startswith("feedback_"):

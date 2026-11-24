@@ -395,7 +395,7 @@ const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", prefligh
   feedback_prepare:"2. 生成双监督样本", feedback_mechanism:"3. 检查点 × 监督四臂",
   feedback_pilot:"4. 动态分配与静态对照", feedback_confirm:"5. 独立自然题确认",
   continual_smoke:"四卡冒烟", continual_necessity:"C1 · 后续任务成功覆盖", continual_method:"C2 · 方法对照",
-  decision_check:"B0 · 检查动作可重放性预检"};
+  decision_check:"B0 · 检查动作可重放性预检", budget_rlvr:"预算受限 RLVR · 同前缀两分支试点"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   scanning_title_catalog:"核对原 Wikipedia 语料的可见标题",
@@ -453,7 +453,11 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   decision_check_inputs:"核对离线训练任务和封存切分", decision_check_replay:"逐游戏重放并测两个分支",
   decision_check_go:"可重放状态达到门槛", decision_check_no_go:"可重放状态未达到门槛",
   decision_check_incomplete:"预检未完成，查看终端和 incomplete.json",
-  decision_check_archived:"中断运行已归档，保留已完成的游戏结果"};
+  decision_check_archived:"中断运行已归档，保留已完成的游戏结果",
+  budget_rlvr_preflight:"核对冻结模型、题目与依赖", budget_rlvr_sampling:"四卡采样并比对短答和长续写",
+  budget_rlvr_comparing:"按题交叉拟合并核对同成本误差", budget_rlvr_pass:"四卡分叉冒烟通过",
+  budget_rlvr_go:"达到试点冻结门槛", budget_rlvr_no_go:"试点未达到冻结门槛",
+  budget_rlvr_incomplete:"试点未完成，查看分卡日志和 incomplete.json"};
 const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   "2wikimultihopqa":"2Wiki 候选 / 可回放", hotpotqa_added:"HotpotQA 缓存新增候选",
   "2wikimultihopqa_added":"2Wiki 缓存新增候选", valid_triplets:"三臂格式均有效",
@@ -462,7 +466,8 @@ const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   corpus_rows:"已扫描语料行数",
   generated_tokens:"生成 token", prompt_tokens:"输入 token", wall_seconds:"运行秒数",
   verified_pairs:"已核验双监督", train_steps:"训练步数", validation_cases:"评估题量",
-  active_gpus:"活动 GPU", seed_index:"种子序号", arm_index:"当轮对照序号", eligible_games:"合格状态"};
+  active_gpus:"活动 GPU", seed_index:"种子序号", arm_index:"当轮对照序号", eligible_games:"合格状态",
+  rollout_tokens:"已计费采样 token", long_branches:"完成的长短对照"};
 
 function renderWikiWorkers(workers = []) {
   return workers.map(worker => {
@@ -484,14 +489,17 @@ function renderWiki(target, runs, title) {
       const feedback = run.id.startsWith("feedback-");
       const continual = run.id.startsWith("continual-");
       const decision = run.id.startsWith("decision-check-");
+      const budget = run.id.startsWith("budget-rlvr-");
       const rows = Object.entries(wikiPhases).filter(([key]) =>
         key.startsWith("feedback_") === feedback && key.startsWith("continual_") === continual &&
-        (key === "decision_check") === decision)
+        (key === "decision_check") === decision && (key === "budget_rlvr") === budget)
         .map(([key, label]) => {
         const row = run.phases[key] || {state:"pending", metrics:{}};
-        const status = decision && row.state === "failed" ? "INCOMPLETE" :
-          (feedback || continual || decision) && row.state === "blocked" ? "NO-GO" :
-          (feedback || continual || decision) && row.state === "done" ? "GO" : row.state === "blocked" ? "等待输入条件" :
+        const gated = feedback || continual || decision || budget;
+        const status = (decision || budget) && row.state === "failed" ? "INCOMPLETE" :
+          budget && row.detail === "budget_rlvr_pass" ? "PASS" :
+          gated && row.state === "blocked" ? "NO-GO" :
+          gated && row.state === "done" ? "GO" : row.state === "blocked" ? "等待输入条件" :
           row.state === "stalled" ? "⚠ 可能卡住" : STATE[row.state];
         const units = row.total ? row.done + " / " + row.total : "—";
         const progress = row.total ? '<br><progress aria-label="' + esc(label) + '" value="' +
