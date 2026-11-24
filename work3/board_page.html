@@ -452,7 +452,8 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   continual_go:"达到当前阶段门槛", continual_no_go:"未达到当前阶段门槛",
   decision_check_inputs:"核对离线训练任务和封存切分", decision_check_replay:"逐游戏重放并测两个分支",
   decision_check_go:"可重放状态达到门槛", decision_check_no_go:"可重放状态未达到门槛",
-  decision_check_incomplete:"预检未完成，查看终端和 incomplete.json"};
+  decision_check_incomplete:"预检未完成，查看终端和 incomplete.json",
+  decision_check_archived:"中断运行已归档，保留已完成的游戏结果"};
 const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   "2wikimultihopqa":"2Wiki 候选 / 可回放", hotpotqa_added:"HotpotQA 缓存新增候选",
   "2wikimultihopqa_added":"2Wiki 缓存新增候选", valid_triplets:"三臂格式均有效",
@@ -488,7 +489,8 @@ function renderWiki(target, runs, title) {
         (key === "decision_check") === decision)
         .map(([key, label]) => {
         const row = run.phases[key] || {state:"pending", metrics:{}};
-        const status = (feedback || continual || decision) && row.state === "blocked" ? "NO-GO" :
+        const status = decision && row.state === "failed" ? "INCOMPLETE" :
+          (feedback || continual || decision) && row.state === "blocked" ? "NO-GO" :
           (feedback || continual || decision) && row.state === "done" ? "GO" : row.state === "blocked" ? "等待输入条件" :
           row.state === "stalled" ? "⚠ 可能卡住" : STATE[row.state];
         const units = row.total ? row.done + " / " + row.total : "—";

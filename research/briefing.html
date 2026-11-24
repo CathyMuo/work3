@@ -1,13 +1,13 @@
 <section class="hero">
   <div class="kicker">工作三 · ICML 2027 方法论文</div>
-  <h1>学习何时检查，才能改善下一步决策</h1>
-  <p class="lead">代理可以检查环境来获取信息。我们关心的是哪些检查会让代理选择更好的行动，并以更少的步数完成任务。方案 B0 先在本地 ALFWorld 文本环境验证真实检查状态能否重复执行。</p>
+  <h1>方案 B0 已收束</h1>
+  <p class="lead">在离线 ALFWorld 中，B0 检验开容器揭示信息后是否有两种可以比较的后续动作。221 局中只有 9 局符合冻结条件，剩余 19 局即使全部合格也只达到 28 局。</p>
 </section>
 <section class="sec">
   <h2>当前进度</h2>
   <p>方案 C 已完成正式四卡冒烟与 C1。数学 pass@1 从 28.91% 到 43.95%，后续指令任务两组 pass@16 各下降 1.17 个百分点，低于冻结的 5 点门槛。C1 为 NO-GO，C2 未启动。</p>
-  <p>B0 等待离线 CPU 预检。最多检查 240 个训练游戏。至少获得 100 个可重放、有行动后果的状态，覆盖至少三类且各至少 10 个，并锁定 200 个未运行的封存游戏，才进入下一阶段。</p>
-  <p>实验运行页会按已检查的游戏数刷新，显示合格数和终态。<a href="https://github.com/CathyMuo/work3/blob/main/docs/factory/decision_check_b0.md">B0 厂内指南</a> · <a href="https://github.com/CathyMuo/work3/blob/main/research/protocols/decision_check_b0.md">B0 冻结协议</a></p>
+  <p>B0 执行状态为 INCOMPLETE，研究门槛不可达。厂内待停止并归档旧进程。家服先核对现有自然题轨迹能否用于比较追加检索和重读。当前无新训练任务。</p>
+  <p><a href="https://github.com/CathyMuo/work3/blob/main/docs/factory/decision_check_b0.md">B0 厂内收尾指南</a> · <a href="https://github.com/CathyMuo/work3/blob/main/research/protocols/decision_check_b0.md">B0 冻结协议</a></p>
 </section>
 <details class="sec">
 <summary>历史方案 C · 训练当前任务时保留后续任务的可学性</summary>

@@ -1,16 +1,29 @@
 {
   "schema_version": 1,
   "project": "work3",
-  "updated_at": "2026-11-23",
-  "current_stage": "方案 C 已收束 · 方案 B0 等待离线预检",
-  "status": "四卡冒烟 GO。C1 正式 NO-GO，数学 pass@1 提高 15.04 个百分点，后续任务 pass@16 两组各下降 1.17 个百分点。C2 未启动。",
-  "next_action": "先用 CPU 核对 ALFWorld 文本游戏是否有可重放、有行动后果的检查状态。B0 达标后才另行冻结 GPU 方法试点。",
+  "updated_at": "2026-11-24",
+  "current_stage": "B0 收束 · 等待厂内归档旧进程",
+  "status": "B0 在 221/240 中断，9 局合格。按执行状态记 INCOMPLETE，冻结门槛不可达，候选收束。",
+  "next_action": "停止并归档旧 B0 进程。家服核对方案 A 是否能复用已有自然题建立同预算逐题对照，当前无新训练任务。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
     "decide_by": "2026-12-15"
   },
   "experiment_results": [
+    {
+      "id": "DECISION_CHECK_B0",
+      "date": "2026-11-24",
+      "release": "cb243f3",
+      "verdict": "INCOMPLETE",
+      "research_gate": "UNREACHABLE",
+      "tested_games": 221,
+      "planned_games": 240,
+      "eligible_games": 9,
+      "eligible_upper_bound": 28,
+      "eligible_type_upper_bound": 1,
+      "note": "Factory-reported partial run. 212 games had no grounded candidate. Workstream closed."
+    },
     {
       "id": "CONTINUAL_RLVR_C1",
       "date": "2026-11-23",

@@ -4,8 +4,13 @@ import argparse
 import hashlib
 import importlib.metadata
 import json
+import os
 import re
+import signal
+import subprocess
+import sys
 from collections import Counter, defaultdict
+from contextlib import redirect_stdout
 from pathlib import Path
 from time import monotonic
 
@@ -20,6 +25,12 @@ PER_TASK = 40
 HORIZON = 40
 CHECKS_PER_GAME = 2
 HELDOUT_PER_SPLIT = 100
+MIN_ELIGIBLE = 100
+MIN_TYPES = 3
+MIN_PER_TYPE = 10
+RUN_SECONDS = 7200
+GAME_SECONDS = 90
+RUN_ID = r"decision-check-[a-z0-9][a-z0-9-]{0,55}"
 ENTITY = re.compile(r"\b[a-z][a-z_-]* \d+\b", re.I)
 TAKE = re.compile(r"take (.+) from (.+)\Z")
 
@@ -149,7 +160,59 @@ def environment(game):
     return textworld.start(str(game), request_infos=fields, wrappers=[AlfredDemangler(shuffle=False)])
 
 
+def probe_game(game):
+    with redirect_stdout(sys.stderr):
+        env = environment(game)
+        try:
+            result = probe(env)
+        finally:
+            env.close()
+    print(json.dumps(result, ensure_ascii=True), flush=True)
+
+
+def bounded_worker(command, seconds):
+    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            encoding="utf-8", errors="replace", start_new_session=os.name == "posix")
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=seconds)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            try:
+                if os.name == "posix":
+                    os.killpg(proc.pid, signal.SIGKILL)
+                else:
+                    proc.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(f"worker {proc.pid} still present after forced stop") from exc
+            raise
+        if proc.returncode:
+            raise RuntimeError(f"worker exited with status {proc.returncode}: {stderr[-2000:].strip()}")
+    finally:
+        proc.stdout.close()
+        proc.stderr.close()
+    return stdout
+
+
+def supervised_probe(game, run_id, deadline):
+    remaining = deadline - monotonic()
+    if remaining <= 0:
+        raise TimeoutError("B0 reached the two-hour run limit")
+    seconds = min(GAME_SECONDS, remaining)
+    command = [sys.executable, "-m", "work3.decision_check_preflight",
+               "--probe-game", str(game), "--id", run_id]
+    try:
+        stdout = bounded_worker(command, seconds)
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"{game.parent.name}: worker exceeded {seconds:.1f}s") from exc
+    return json.loads(stdout.splitlines()[-1])
+
+
 def run(args, directory, progress):
+    deadline = monotonic() + RUN_SECONDS
     roots = {name: getattr(args, name).resolve(strict=True) for name in ("train", "seen", "unseen")}
     if len(set(roots.values())) != len(roots) or any(
             a in b.parents for a in roots.values() for b in roots.values() if a != b):
@@ -170,13 +233,13 @@ def run(args, directory, progress):
         raise ValueError("no solvable training games were found")
     started = monotonic()
     totals, reasons = Counter(), Counter()
+    progress.update("running", 0, len(selected), detail="decision_check_replay", metrics={"eligible_games": 0})
     with (directory / "decision_checks.jsonl").open("w", encoding="utf-8") as stream:
         for index, row in enumerate(selected, start=1):
-            env = environment(roots["train"] / row["file"])
             try:
-                result = probe(env)
-            finally:
-                env.close()
+                result = supervised_probe(roots["train"] / row["file"], args.id, deadline)
+            except (Exception, KeyboardInterrupt) as exc:
+                raise RuntimeError(f"game {index}/{len(selected)} {row['file']}: {exc}") from exc
             stream.write(json.dumps({**row, **result}, ensure_ascii=False) + "\n")
             stream.flush()
             reasons[result["reason"]] += 1
@@ -185,7 +248,7 @@ def run(args, directory, progress):
             progress.update("running", index, len(selected), detail="decision_check_replay",
                             metrics={"eligible_games": sum(totals.values())})
     eligible = sum(totals.values())
-    passed = eligible >= 100 and sum(value >= 10 for value in totals.values()) >= 3
+    passed = eligible >= MIN_ELIGIBLE and sum(value >= MIN_PER_TYPE for value in totals.values()) >= MIN_TYPES
     summary = {"protocol": "decision_check_b0_v1", "repo_revision": progress.commit, "versions": versions,
                "verdict": "GO" if passed else "NO_GO", "tested_games": len(selected),
                "tested_by_type": dict(counts), "eligible_games": eligible, "eligible_by_type": dict(totals),
@@ -198,26 +261,39 @@ def run(args, directory, progress):
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
+def stop_on_signal(signum, _frame):
+    raise KeyboardInterrupt(f"received {signal.Signals(signum).name}")
+
+
 def main():
+    if len(sys.argv) == 5 and sys.argv[1] == "--probe-game" and sys.argv[3] == "--id":
+        probe_game(Path(sys.argv[2]))
+        return
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train", type=Path, required=True)
     parser.add_argument("--seen", type=Path, required=True)
     parser.add_argument("--unseen", type=Path, required=True)
     parser.add_argument("--id", required=True)
     args = parser.parse_args()
-    if not re.fullmatch(r"decision-check-[a-z0-9][a-z0-9-]{0,55}", args.id):
+    if not re.fullmatch(RUN_ID, args.id):
         parser.error("--id must be a fresh decision-check-<name>")
     directory = progress_root() / args.id
     directory.parent.mkdir(parents=True, exist_ok=True)
     directory.mkdir()
     progress = Progress(directory, "decision_check")
+    signal.signal(signal.SIGTERM, stop_on_signal)
     try:
         with progress.heartbeat():
             run(args, directory, progress)
     except (Exception, KeyboardInterrupt) as exc:
-        atomic_json(directory / "incomplete.json",
-                    {"verdict": "INCOMPLETE", "repo_revision": progress.commit, "error": str(exc)})
-        progress.update("failed", detail="decision_check_incomplete")
+        row = progress.data["phases"].get("decision_check", {})
+        done, total, metrics = row.get("done", 0), row.get("total", 0), row.get("metrics", {})
+        atomic_json(directory / "incomplete.json", {
+            "verdict": "INCOMPLETE", "repo_revision": progress.commit, "error": str(exc),
+            "tested_games": done, "planned_games": total, "eligible_games": metrics.get("eligible_games", 0),
+        })
+        progress.update("failed", done, total, detail="decision_check_incomplete", metrics=metrics)
         raise
 
 

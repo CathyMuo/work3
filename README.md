@@ -1,6 +1,6 @@
 # Work 3
 
-**2026-11-23 C1 正式 NO-GO，下一步为 B0 离线环境预检。** [B0 启动指南](docs/factory/decision_check_b0.md) · [B0 冻结协议](research/protocols/decision_check_b0.md) · [研究计划](research/EXPERIMENT_PLAN.md)
+**2026-11-24 B0 在 221/240 局中断，冻结门槛不可达。** [B0 收尾指南](docs/factory/decision_check_b0.md) · [B0 冻结协议](research/protocols/decision_check_b0.md) · [研究计划](research/EXPERIMENT_PLAN.md)
 
 历史 Wikipedia 研究已经收束。P0 通过，P1 NO-GO，NCP 已停止，P2 已取消。微批次消融完成，判定 NO EVIDENCE。
 
