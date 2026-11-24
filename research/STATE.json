@@ -2,15 +2,31 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-24",
-  "current_stage": "预算受限 RLVR · 同前缀试点待运行",
-  "status": "试点协议、256 道数学面板和四卡离线入口已冻结，等待真实冒烟及试点结果。",
-  "next_action": "先验证真实长短分叉，再用 2,048 条同前缀结果比较迟到的正信号与等成本估计误差。",
+  "current_stage": "预算受限 RLVR · 正式试点 NO-GO",
+  "status": "四卡冒烟通过，正式面板完成 2,048 条。可恢复新信号 22.12%，同成本估计的 RMSE 为全长对照的 2.003 倍。路线收束。",
+  "next_action": "保留自然全长采样为后续预算问题的强基线。当前无待执行的新训练或试验。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
     "decide_by": "2026-12-15"
   },
   "experiment_results": [
+    {
+      "id": "BUDGET_RLVR_PAIRED_PILOT",
+      "date": "2026-11-24",
+      "release": "2c3cd8e",
+      "verdict": "NO-GO",
+      "sample_count": 2048,
+      "late_rescue_count": 453,
+      "late_rescue_rate": 0.22119140625,
+      "max_min_expected_token_ratio": 1.0079348516641844,
+      "method": "paired_disagreement",
+      "method_rmse": 0.015847517165181405,
+      "best_baseline": "full_long",
+      "baseline_rmse": 0.007912366795468579,
+      "rmse_relative_gain": -1.0028794891381043,
+      "note": "Complete pilot. Conditional RMSE and expected rollout tokens from the paired panel; no training stage."
+    },
     {
       "id": "DECISION_CHECK_B0",
       "date": "2026-11-24",

@@ -1,13 +1,13 @@
 <section class="hero">
   <div class="kicker">工作三 · ICML 2027 方法论文</div>
-  <h1>用短答判分估计长预算训练信号</h1>
-  <p class="lead">C1 的数学基座在 384 token 截断了 349/512 条。当前候选从同一个未结束前缀运行短答和自然长续写，验证廉价判分能否降低获取长预算训练信号的成本。</p>
+  <h1>预算受限强化学习试点已收束</h1>
+  <p class="lead">四卡完成 2,048 条。453 条轨迹在短答和前缀都没有可核验正确答案时，由长续写得到正确结果。在匹配采样成本下，直接采较少的自然全长轨迹得到最低奖励估计误差。</p>
 </section>
 <section class="sec">
   <h2>当前进度</h2>
   <p>方案 C 已完成正式四卡冒烟与 C1。数学 pass@1 从 28.91% 到 43.95%，后续指令任务两组 pass@16 各下降 1.17 个百分点，低于冻结的 5 点门槛。C1 为 NO-GO，C2 未启动。</p>
-  <p>旧 B0 已归档。新试点先跑 16 条四卡冒烟，再跑 256 道题、每题 8 次的完整面板。两条门槛为至少 5% 可恢复正信号，同成本估计误差比最强对照低至少 20%。等待厂内读数。</p>
-  <p><a href="https://github.com/CathyMuo/work3/blob/main/docs/factory/budget_rlvr_paired_pilot.md">厂内运行指南</a> · <a href="https://github.com/CathyMuo/work3/blob/main/research/protocols/budget_rlvr_paired_pilot.md">冻结协议</a></p>
+  <p>同前缀试点正式 NO-GO。匹配采样成本后，拟方法的 RMSE 为 0.015848，全长对照为 0.007912。当前无待执行实验。</p>
+  <p><a href="https://github.com/CathyMuo/work3/blob/main/docs/factory/budget_rlvr_paired_pilot.md">试点终态</a> · <a href="https://github.com/CathyMuo/work3/blob/main/research/protocols/budget_rlvr_paired_pilot.md">冻结协议</a></p>
 </section>
 <details class="sec">
 <summary>历史方案 C · 训练当前任务时保留后续任务的可学性</summary>

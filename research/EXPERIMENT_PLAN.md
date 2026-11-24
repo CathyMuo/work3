@@ -4,7 +4,7 @@
 
 ## 当前方法与冻结计划
 
-预算受限 RLVR 同前缀试点已经冻结。复用 C1 的原版 3B 和本地数学判分，留出 256 道独立开发题，每题采八次。对未结束前缀运行短答与自然长续写，并按匹配采样成本比较长预算奖励估计。先过 5% 新信号和 20% 相对 RMSE 两道门槛，再决定是否进入训练。 [冻结协议](protocols/budget_rlvr_paired_pilot.md) · [厂内指南](../docs/factory/budget_rlvr_paired_pilot.md)
+预算受限 RLVR 同前缀试点已结束。四卡完成 2,048 条，453 条后段新正信号占 22.12%，期望采样 token 最大与最小比为 1.00793。冻结拟方法 RMSE 0.015848，高于最佳全长对照的 0.007912，正式 NO-GO。保留等待完整自然输出的收益证据与全长对照。当前无待执行实验。 [冻结协议](protocols/budget_rlvr_paired_pilot.md) · [终态及历史运行指南](../docs/factory/budget_rlvr_paired_pilot.md)
 
 ## 已归档候选
 

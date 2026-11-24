@@ -1017,3 +1017,7 @@ B0 先检查本地 ALFWorld 文本环境是否能构造可复验的、有实际�
 ## 2026-11-24 冻结预算受限强化学习同前缀试点
 
 C1 的冻结 3B 数学基座在 384 token 下截断 349/512 条。新试点从同一未结束前缀采短答与自然长续写，用本地精确判分观察长预算反馈。冻结 256 道与 C1 无重叠的公开数学题，四卡最多两小时，只推理和判分。先过迟到正信号与同成本 RMSE 的双门槛再决定训练。 [冻结协议](protocols/budget_rlvr_paired_pilot.md) · [厂内指南](../docs/factory/budget_rlvr_paired_pilot.md)
+
+## 2026-11-24 同前缀试点正式 NO-GO
+
+2c3cd8e 冒烟通过，2,048 条正式面板完整。可恢复正信号 453 条，成本最大最小比 1.00793。冻结拟方法 paired_disagreement 的条件 RMSE 为 0.0158475，最强对照 full_long 为 0.0079124，误差高 100.29%。反馈正文的 62.64% 属于 short_calibrated_critic 对照。按原冻结门槛停止该候选。采集耗时约 12.5 分钟。对照成本为面板回算期望 token，后续训练表现仍未测。 [冻结协议](protocols/budget_rlvr_paired_pilot.md)
