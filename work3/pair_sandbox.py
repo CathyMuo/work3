@@ -33,6 +33,8 @@ TEXT_CAP = 192
 READY = b"WORK3_SANDBOX_READY\n"
 EXCLUDED_DIRS = {"site-packages", "dist-packages", "test", "tests", "idlelib", "tkinter", "turtledemo", "ensurepip"}
 ROOT_ENTRIES = ("usr", "lib", "lib64", "lib32", "libx32")
+FALLBACK_IFACES = ("lo", "tunl0", "sit0", "ip6tnl0", "gre0", "gretap0", "erspan0",
+                   "ip6gre0", "ip6gretap0", "ip6erspan0")
 LIBRARY = re.compile(r"(?:=>\s*)?(/\S+)\s+\(0x[0-9a-f]+\)")
 LAYOUT = ("import json,sys,sysconfig; print(json.dumps({'stdlib': sysconfig.get_paths()['stdlib'], "
           "'dynload': sysconfig.get_config_var('DESTSHARED') or '', 'version': sys.version.split()[0]}))")
@@ -132,7 +134,7 @@ def sealed_code(code):
     return descriptor
 
 
-PROBE = r"""import errno, os, resource, socket, sys, threading
+PROBE = r"""import errno, fcntl, os, resource, socket, struct, sys, threading
 def verify():
     if os.getuid() == 0 or os.geteuid() == 0:
         return 'submission runs as uid 0 inside the sandbox'
@@ -159,8 +161,23 @@ def verify():
     except RuntimeError:
         pass
     names = sorted(name for _, name in socket.if_nameindex())
-    if names != ['lo']:
-        return f'the network namespace is not private: {names}'
+    extra_ifaces = set(names) - set(FALLBACK_IFACES)
+    if 'lo' not in names or extra_ifaces:
+        return f'the network namespace has unexpected interfaces: {names}'
+    ctl = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        for name in names:
+            req = struct.pack('16s24x', name.encode('ascii'))
+            flags = struct.unpack_from('H', fcntl.ioctl(ctl.fileno(), 0x8913, req), 16)[0]
+            if flags & 0x1:
+                return f'interface is UP in private netns: {name}'
+            try:
+                fcntl.ioctl(ctl.fileno(), 0x8915, req)
+                return f'interface has an IPv4 address in private netns: {name}'
+            except OSError:
+                pass
+    finally:
+        ctl.close()
     for address in (('127.0.0.1', 9), ('10.0.0.1', 9), ('1.1.1.1', 53)):
         probe = socket.socket()
         probe.settimeout(0.2)
@@ -203,7 +220,7 @@ def verify():
         pass
     return sys.stdin.read().strip()
 print(verify())
-""".replace("ROOT_ENTRIES", repr(ROOT_ENTRIES))
+""".replace("ROOT_ENTRIES", repr(ROOT_ENTRIES)).replace("FALLBACK_IFACES", repr(FALLBACK_IFACES))
 
 NPROC_PROBE = """import errno, os, threading
 try:

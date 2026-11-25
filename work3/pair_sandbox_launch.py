@@ -166,7 +166,10 @@ def enter_drop_first(jail_fd, uid, gid, parent):
     call("prctl", PR_SET_DUMPABLE, 1, 0, 0, 0)  # lets the new uid write its own id maps
     die_with_parent(parent)  # credential changes clear the parent-death signal
     outer_uid, outer_gid = os.geteuid(), os.getegid()
+    outer_net = os.readlink("/proc/self/ns/net")
     call("unshare", NAMESPACES, code=USERNS_DENIED_EXIT)
+    if os.readlink("/proc/self/ns/net") == outer_net:
+        fail("network namespace did not change")
     write("/proc/self/setgroups", "deny")
     write("/proc/self/uid_map", f"{INSIDE_ID} {outer_uid} 1\n")
     write("/proc/self/gid_map", f"{INSIDE_ID} {outer_gid} 1\n")
@@ -198,11 +201,16 @@ def enter_map_helper(jail_fd, uid, gid, parent):
             os._exit(SETUP_EXIT)
     os.close(ready_read)
     os.close(done_write)
+    outer_net = os.readlink("/proc/self/ns/net")
     if libc.unshare(ctypes.c_ulong(NAMESPACES)) != 0:
         error = ctypes.get_errno()
         os.close(ready_write)
         os.waitpid(helper, 0)
         fail(f"unshare: {os.strerror(error)}", USERNS_DENIED_EXIT)
+    if os.readlink("/proc/self/ns/net") == outer_net:
+        os.close(ready_write)
+        os.waitpid(helper, 0)
+        fail("network namespace did not change")
     os.write(ready_write, b"1")
     os.close(ready_write)
     mapped = os.read(done_read, 1) == b"1"
@@ -220,7 +228,10 @@ def enter_map_helper(jail_fd, uid, gid, parent):
 def enter_nonroot_ro(jail, parent):
     """Fallback when invoked as a non-root dev user who owns the jail directory."""
     outer_uid, outer_gid = os.geteuid(), os.getegid()
+    outer_net = os.readlink("/proc/self/ns/net")
     call("unshare", NAMESPACES | CLONE_NEWNS, code=USERNS_DENIED_EXIT)
+    if os.readlink("/proc/self/ns/net") == outer_net:
+        fail("network namespace did not change")
     write("/proc/self/setgroups", "deny")
     write("/proc/self/uid_map", f"{INSIDE_ID} {outer_uid} 1\n")
     write("/proc/self/gid_map", f"{INSIDE_ID} {outer_gid} 1\n")

@@ -1035,3 +1035,7 @@ C1 的冻结 3B 数学基座在 384 token 下截断 349/512 条。新试点从�
 厂内反馈 #60 确认 39/39 CodeContests 分片已通过 `verify-source`（7,509,753,086 字节，SHA-256 全对，pyarrow 可读 13,328 行），但容器 AppArmor (`cri-containerd.apparmor.d`) 在系统调用层禁用 `mount(2)`，真 `bwrap` 无法启动。同时排查出原沙箱与外部 shim 的三处缺陷：用户命名空间内 uid 0 使 `RLIMIT_NPROC=1` 失效、shim 漏掉 `CLONE_NEWPID` 导致子进程泄漏到宿主机、`timeout` 仅杀父进程不回收子孙。
 
 不放弃真实程序执行、也不申请特权容器或修改 AppArmor，而是将执行器替换为内置的无 mount 沙箱 `work3-userns-chroot-v1`：root 容器下不调用 `mount(2)`，切换为非 root 外部 UID（默认 `65534:65534`）使 `RLIMIT_NPROC=1` 真实生效、显式 `CLONE_NEWPID` 由 PID 1 原子回收、叠加内核 `seccomp-BPF` 拦截进程/线程创建与逃逸系统调用、最小化只读 chroot 根目录与写密封 `memfd`、launcher 自身限时杀私有 PID 1 并配外层 `killpg` 兜底。新增 4 秒有界预检 `probe-sandbox` 独立验证 seccomp (`EPERM`) 与无 seccomp 下的 `RLIMIT_NPROC=1` (`EAGAIN`)。方法、数据拆分、预算与去留门槛保持不变。 [厂内指南](../docs/factory/feedback_pair.md)
+
+## 2026-11-25 放宽私有 netns 对内核默认下线隧道口（tunl0）的断言
+
+厂内反馈 #61 确认 `7c91c28` 无 `mount(2)` 沙箱在厂内容器中正常启动，非 root uid、私有 PID 命名空间、`RLIMIT_NPROC=1`、seccomp 拦 `fork (EPERM)` 与线程拦截均已通过；仅在网络预检因内核加载 `ipip` 模块为每个新 netns 自动创建下线伪接口 `tunl0` 而触发旧的 `names != ['lo']` 名称断言。改为：launcher 在 `unshare` 后直接校验 `/proc/self/ns/net` inode 变化，同时在沙箱内通过 `SIOCGIFFLAGS`/`SIOCGIFADDR` 核验所有允许的回环及内核默认隧道接口均处于 `DOWN` 且无 IPv4 地址，并保留全部连通性探测。研究方法与门槛不变。

@@ -141,6 +141,12 @@ class FeedbackPairTests(unittest.TestCase):
         [(ro_status, _)], _, _ = verifier.evaluate("open('/escape', 'w').write('x')", [("", "")])
         self.assertEqual(ro_status, "error")
 
+    def test_netns_probe_allows_down_fallback_tunnels_and_rejects_active_ifaces(self):
+        from work3.pair_sandbox import FALLBACK_IFACES, PROBE
+        self.assertIn("tunl0", FALLBACK_IFACES)
+        self.assertIn("0x8913", PROBE)
+        self.assertIn("0x8915", PROBE)
+
     def test_verify_source_pins_content_before_execution(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
