@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "project": "work3",
-  "updated_at": "2026-11-24",
-  "current_stage": "可验证反馈组合 · 首筛协议冻结",
-  "status": "CodeContests 冻结训练分片待厂内验收；正式判分环境待通过增强的实际隔离预检。无方法结果。",
-  "next_action": "并行验收 39 个数据分片与执行环境。CPU 准备通过后运行四卡冒烟，按原冻结协议推进。",
+  "updated_at": "2026-11-25",
+  "current_stage": "可验证反馈组合 · 无 mount 沙箱修复与首筛准备",
+  "status": "CodeContests 39/39 分片已在厂内通过 verify-source（7,509,753,086 字节）。已移除 Bubblewrap 依赖并发布内置无 mount 沙箱 work3-userns-chroot-v1，封堵反馈 #60 指出的全部三处隔离与回收缺陷。尚无方法结果。",
+  "next_action": "厂内先运行 probe-sandbox（约 4 秒）验收内置无 mount 沙箱，通过后运行 prepare -> 四卡 smoke -> 四卡 pilot。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",

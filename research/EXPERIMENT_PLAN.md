@@ -1,10 +1,10 @@
 # Work 3 研究计划
 
-更新于 2026-11-24。目标为 ICML 2027 方法论文。
+更新于 2026-11-25。目标为 ICML 2027 方法论文。
 
 ## 当前方法与冻结计划
 
-可验证反馈组合首筛检验，学习一过一错两个真实反馈的交互能否改善独立算法题上的修复。先独立核验 CodeContests 39 个训练分片与执行器的完整隔离，再进行 CPU 数据准备。预检就绪后，用四卡采集同一失败状态的交叉配对和预算匹配对照。修复模型冻结。正式首筛前要求训练与封存各 384 个合格失败，方法进入复验要求超过最强对照至少 5 个百分点并满足区间与成本门槛。目前等待数据验收及厂内执行环境确认。 [冻结协议](protocols/feedback_pair.md) · [厂内指南](../docs/factory/feedback_pair.md)
+可验证反馈组合首筛检验，学习一过一错两个真实反馈的交互能否改善独立算法题上的修复。CodeContests 39/39 训练分片已在厂内通过 `verify-source`（7,509,753,086 字节）。已移除 Bubblewrap 与 `mount(2)` 依赖，发布内置无 mount 沙箱 `work3-userns-chroot-v1`（非 root 外部 UID + 真实 `RLIMIT_NPROC=1` + 私有 PID/net/user/IPC/UTS 命名空间 + 内核 `seccomp-BPF` + 最小只读 chroot + PID 1 原子回收与 `killpg` 兜底）。厂内先运行 `probe-sandbox`（约 4 秒）验收沙箱，再依次运行 `prepare`、四卡 `smoke` 与四卡 `pilot`。修复模型冻结。正式首筛前要求训练与封存各 384 个合格失败，方法进入复验要求超过最强对照至少 5 个百分点并满足区间与成本门槛。 [冻结协议](protocols/feedback_pair.md) · [厂内指南](../docs/factory/feedback_pair.md)
 
 预算受限 RLVR 同前缀试点已结束。四卡完成 2,048 条，453 条后段新正信号占 22.12%，期望采样 token 最大与最小比为 1.00793。冻结拟方法 RMSE 0.015848，高于最佳全长对照的 0.007912，正式 NO-GO。保留等待完整自然输出的收益证据与全长对照。 [冻结协议](protocols/budget_rlvr_paired_pilot.md) · [终态及历史运行指南](../docs/factory/budget_rlvr_paired_pilot.md)
 

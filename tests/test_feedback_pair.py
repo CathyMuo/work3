@@ -10,6 +10,7 @@ from unittest.mock import patch
 from work3.feedback_pair import initial_row, join, plan_repairs
 from work3.feedback_pair_data import DATA_REVISION, Verifier, clean_code, similar_input, split_tests, verify_source
 from work3.feedback_pair_metrics import BRANCHES, PAIRS, REPEATS, choose, collect_scored, fit
+from work3.pair_sandbox import SandboxStartError
 from work3.wiki_rsi_progress import Progress, board_runs
 
 
@@ -97,17 +98,48 @@ class FeedbackPairTests(unittest.TestCase):
         self.assertIsNone(clean_code("```python\nprint("))
 
     def test_failure_to_start_isolation_is_not_a_wrong_answer(self):
-        with self.assertRaisesRegex(RuntimeError, "isolated Python did not start"):
-            Verifier.run_case([sys.executable, "-c", "import sys; sys.exit(1)"], "1", "2")
-
-    def test_network_check_does_not_waive_read_only_mounts(self):
         verifier = Verifier.__new__(Verifier)
-        with patch("work3.feedback_pair_data.os.readlink", return_value="net:[1]"), \
-                patch.object(verifier, "evaluate", return_value=([("wrong", "expected a read-only mount: /")], 1, 0)) as run:
-            with self.assertRaisesRegex(RuntimeError, "read-only mount"):
+        with patch.object(verifier, "command", return_value=[sys.executable, "-c", "import sys; sys.exit(1)"]):
+            r_fd, w_fd = __import__("os").pipe()
+            try:
+                __import__("os").close(w_fd)
+                with self.assertRaisesRegex(SandboxStartError, "isolated Python did not start"):
+                    verifier.run_case(r_fd, "1", "2")
+            finally:
+                __import__("os").close(r_fd)
+
+    def test_probe_rejects_broken_isolation_and_leftovers(self):
+        verifier = Verifier.__new__(Verifier)
+        verifier.uid, verifier.gid, verifier.mode, verifier.seccomp = 65534, 65534, "drop-first", True
+        with patch("work3.pair_sandbox.os.geteuid", return_value=0, create=True), \
+                patch.object(verifier, "uid_pids", return_value=set()), \
+                patch.object(verifier, "evaluate", return_value=([("wrong", "fork was allowed")], 1, 0)):
+            with self.assertRaisesRegex(RuntimeError, "fork was allowed"):
                 verifier.probe()
-        self.assertIn("os.statvfs", run.call_args.args[0])
-        self.assertIn("/proc/self/mountinfo", run.call_args.args[0])
+        # Pre-existing uid processes are ignored; newly leaked processes fail probe.
+        calls = iter([([("pass", "work3-isolation")], 1, 0.1), ([("pass", "nproc-ok")], 1, 0.1),
+                      ([("timeout", "")], 1, 2.5), ([("error", "")], 1, 1.0)])
+        pid_snapshots = iter([{42}, {42, 999}] + [{42, 999}] * 25)
+        with patch("work3.pair_sandbox.os.geteuid", return_value=0, create=True), \
+                patch("work3.pair_sandbox.sleep"), \
+                patch.object(verifier, "uid_pids", side_effect=lambda: next(pid_snapshots)), \
+                patch.object(verifier, "evaluate", side_effect=lambda *a, **k: next(calls)):
+            with self.assertRaisesRegex(RuntimeError, "999"):
+                verifier.probe()
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux namespace sandbox test")
+    def test_real_linux_sandbox_blocks_fork_threads_and_writes(self):
+        verifier = Verifier()
+        report = verifier.probe()
+        self.assertEqual(report["isolation"], "pass")
+        self.assertEqual(report["nproc_independent"], "pass")
+        self.assertEqual(report["sleep_limit"], "timeout")
+        [(status, out)], count, _ = verifier.evaluate("a, b = map(int, input().split()); print(a + b)", [("3 4\n", "7")])
+        self.assertEqual((status, out, count), ("pass", "7", 1))
+        [(err_status, _)], _, _ = verifier.evaluate("import os; os.fork()", [("", "")])
+        self.assertEqual(err_status, "error")
+        [(ro_status, _)], _, _ = verifier.evaluate("open('/escape', 'w').write('x')", [("", "")])
+        self.assertEqual(ro_status, "error")
 
     def test_verify_source_pins_content_before_execution(self):
         with tempfile.TemporaryDirectory() as folder:

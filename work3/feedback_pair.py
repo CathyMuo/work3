@@ -177,7 +177,7 @@ def rank_worker(args):
     directory, stage = args.directory, args.stage
     device = torch.device("cuda", rank)
     verifier = Verifier()
-    verifier.probe()
+    verifier.probe(check_leftovers=False)
     tokenizer = load_prompt_tokenizer(args.model)
     model = AutoModelForCausalLM.from_pretrained(args.model, local_files_only=True,
                                                 torch_dtype=torch.bfloat16, use_safetensors=True).to(device).eval()
@@ -374,19 +374,24 @@ def main():
     os.environ.update(HF_HUB_OFFLINE="1", HF_DATASETS_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
                       HF_HUB_DISABLE_TELEMETRY="1", TOKENIZERS_PARALLELISM="false")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("verify-source", "prepare", "smoke", "pilot", "worker"))
+    parser.add_argument("phase", choices=("verify-source", "probe-sandbox", "prepare", "smoke", "pilot", "worker"))
     parser.add_argument("--id")
     parser.add_argument("--source", type=Path)
     parser.add_argument("--model", type=Path)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--smoke-run")
-    parser.add_argument("--cpu-jobs", type=int, choices=range(1, 33), default=12, metavar="1..32")
+    parser.add_argument("--cpu-jobs", type=int, choices=range(1, 33), default=8, metavar="1..32")
     parser.add_argument("--rank", type=int, choices=range(GPUS), help=argparse.SUPPRESS)
     parser.add_argument("--stage", choices=("initial", "repair"), help=argparse.SUPPRESS)
     parser.add_argument("--directory", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.phase == "worker":
         rank_worker(args)
+        return
+    if args.phase == "probe-sandbox":
+        verifier = Verifier()
+        report = verifier.probe()
+        print(json.dumps({"probe": report, "version": verifier.version()}, ensure_ascii=False, indent=2))
         return
     if args.phase in ("verify-source", "prepare") and args.source is None:
         parser.error(f"{args.phase} requires --source")

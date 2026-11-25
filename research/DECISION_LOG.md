@@ -1029,3 +1029,9 @@ C1 的冻结 3B 数学基座在 384 token 下截断 349/512 条。新试点从�
 ## 2026-11-24 补齐反馈组合数据与运行准入
 
 厂内报告对替代执行环境完成了功能探针，缺少只读挂载与真实系统接口等原协议执行条件。加强实测预检，正式判分等待受支持的隔离环境。固定 CodeContests 上游 39 个训练分片的内容摘要，新增纯 CPU 离线验收。数据准备尚未运行，冒烟和正式首筛均无研究结果。样本门槛、方法及对照保持冻结。 [厂内指南](../docs/factory/feedback_pair.md)
+
+## 2026-11-25 替换为内置无 mount 沙箱并封堵反馈 #60 三处缺陷
+
+厂内反馈 #60 确认 39/39 CodeContests 分片已通过 `verify-source`（7,509,753,086 字节，SHA-256 全对，pyarrow 可读 13,328 行），但容器 AppArmor (`cri-containerd.apparmor.d`) 在系统调用层禁用 `mount(2)`，真 `bwrap` 无法启动。同时排查出原沙箱与外部 shim 的三处缺陷：用户命名空间内 uid 0 使 `RLIMIT_NPROC=1` 失效、shim 漏掉 `CLONE_NEWPID` 导致子进程泄漏到宿主机、`timeout` 仅杀父进程不回收子孙。
+
+不放弃真实程序执行、也不申请特权容器或修改 AppArmor，而是将执行器替换为内置的无 mount 沙箱 `work3-userns-chroot-v1`：root 容器下不调用 `mount(2)`，切换为非 root 外部 UID（默认 `65534:65534`）使 `RLIMIT_NPROC=1` 真实生效、显式 `CLONE_NEWPID` 由 PID 1 原子回收、叠加内核 `seccomp-BPF` 拦截进程/线程创建与逃逸系统调用、最小化只读 chroot 根目录与写密封 `memfd`、launcher 自身限时杀私有 PID 1 并配外层 `killpg` 兜底。新增 4 秒有界预检 `probe-sandbox` 独立验证 seccomp (`EPERM`) 与无 seccomp 下的 `RLIMIT_NPROC=1` (`EAGAIN`)。方法、数据拆分、预算与去留门槛保持不变。 [厂内指南](../docs/factory/feedback_pair.md)
