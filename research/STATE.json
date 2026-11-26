@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "project": "work3",
-  "updated_at": "2026-11-25",
-  "current_stage": "可验证反馈组合 · 无 mount 沙箱修复与首筛准备",
-  "status": "CodeContests 39/39 分片已在厂内通过 verify-source（7,509,753,086 字节）。已移除 Bubblewrap 依赖并发布内置无 mount 沙箱 work3-userns-chroot-v1，封堵反馈 #60 指出的全部三处隔离与回收缺陷。尚无方法结果。",
-  "next_action": "厂内先运行 probe-sandbox（约 4 秒）验收内置无 mount 沙箱，通过后运行 prepare -> 四卡 smoke -> 四卡 pilot。",
+  "updated_at": "2026-11-26",
+  "current_stage": "放大差距自博弈 · P0a 高低预算一致性校准",
+  "status": "可验证反馈组合（feedback_pair_v1）在方法层面停止：反馈 #62 的 prepare 因沙箱外层期限计入并发启动而中断，复核认为冻结小模型的反馈内容与重采样打平、四格选择上限低于门槛。工作三改为 RSI 方向的放大差距自博弈，先做纯推理 P0a；沙箱已改为启动与执行分开计时。尚无新方法结果。",
+  "next_action": "厂内按 docs/factory/amp_gap_p0a.md 带入 Qwen3-4B-Base、Qwen3-4B 与 Hendrycks MATH，依次运行 probe-sandbox、verify-data、smoke、p0a（主模型），再跑副模型。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
@@ -157,6 +157,11 @@
     "P0_RETRIEVAL_DIAG": {
       "file": "research/protocols/P0_retrieval_diagnosis.md",
       "sha256": "13be447d4afcd7ce355ba3d63a539025d88e04758e9a0b9efcc26a77dfc9a80d"
+    },
+    "AMP_GAP_P0A": {
+      "file": "research/protocols/amp_gap_p0a.md",
+      "sha256": "1df3bd1e42f886482b5c6c2c014fd10a5119f0c99db75af04bc4ee2085da3461",
+      "rule": "1,000 MATH train problems (200/level), 8 samples per arm; GO if some high-budget arm and tau in {0.75,0.875} has >=100 confident problems at >=0.90 modal accuracy, a gap set (A_short<=0.5, A_high>=tau) of >=30 problems and >=10% share with >=0.85 accuracy and >=10pp over the R-Zero band (0.25<=A_short<=0.75), and infra<=1%."
     }
   },
   "upstreams": {
@@ -167,5 +172,7 @@
   "p2_release": "p2-r16",
   "rsi_current_protocol": "research/protocols/RSI_wikipedia_feedback_allocation_v2.md",
   "rsi_factory_guide": "docs/factory/RSI_wikipedia_feedback_allocation_v2.md",
-  "rsi_home_guide": "docs/RSI_wikipedia_home.md"
+  "rsi_home_guide": "docs/RSI_wikipedia_home.md",
+  "amp_gap_protocol": "research/protocols/amp_gap_p0a.md",
+  "amp_gap_factory_guide": "docs/factory/amp_gap_p0a.md"
 }

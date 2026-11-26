@@ -8,6 +8,11 @@ RLIMIT_NPROC=1 and a seccomp-BPF filter blocking process/thread creation. The la
 enforces the wall clock, kills the private PID namespace at the deadline and reaps it.
 `probe()` verifies all properties inside the real sandbox before any data is read; it
 never runs an unbounded process test.
+
+Timing (factory feedback #62): the launcher arms its own wall-clock timer only after the
+namespaces and chroot exist, so the execution limit never includes setup. The outer
+backstop therefore allows a separate startup budget (namespace creation queues under
+parallel load) before declaring the launcher wedged.
 """
 
 import fcntl
@@ -27,7 +32,11 @@ EXECUTOR = "work3-userns-chroot-v1"
 SYSTEM_PYTHON = Path("/usr/bin/python3")
 LAUNCHER = Path(__file__).resolve().with_name("pair_sandbox_launch.py")
 WALL_SECONDS = 2.5
+CPU_SECONDS = 1
+MEMORY_BYTES = 268435456
 BACKSTOP_SECONDS = 3.0
+STARTUP_SECONDS = float(os.environ.get("WORK3_SANDBOX_STARTUP_SECONDS") or 60.0)
+LATENCY_WINDOW = 65536
 TIMEOUT_EXIT, USERNS_DENIED_EXIT, SECCOMP_DENIED_EXIT = 124, 126, 127
 TEXT_CAP = 192
 READY = b"WORK3_SANDBOX_READY\n"
@@ -246,7 +255,13 @@ except RuntimeError:
 class Verifier:
     """Run each submission against one input at a time in the mount-free sandbox."""
 
-    def __init__(self):
+    wall, cpu, memory = WALL_SECONDS, CPU_SECONDS, MEMORY_BYTES
+    latencies = None
+
+    def __init__(self, wall=WALL_SECONDS, cpu=CPU_SECONDS, memory=MEMORY_BYTES):
+        if not (0 < wall <= 60 and 1 <= int(cpu) <= 60 and 64 * 2**20 <= int(memory) <= 8 * 2**30):
+            raise ValueError("sandbox limits out of range")
+        self.wall, self.cpu, self.memory = float(wall), int(cpu), int(memory)
         if sys.platform != "linux" or not SYSTEM_PYTHON.is_file() or not LAUNCHER.is_file():
             raise RuntimeError("Linux with /usr/bin/python3 is required for submission execution")
         if os.geteuid() == 0:
@@ -264,7 +279,7 @@ class Verifier:
     def command(self, descriptor, seccomp=None):
         flag = "on" if (self.seccomp if seccomp is None else seccomp) else "off"
         return [str(SYSTEM_PYTHON), "-I", "-S", "-B", str(LAUNCHER), self.mode, flag, str(self.jail),
-                str(self.uid), str(self.gid), str(WALL_SECONDS), str(descriptor)]
+                str(self.uid), str(self.gid), str(self.wall), str(descriptor), str(self.cpu), str(self.memory)]
 
     def evaluate(self, code, cases, *, seccomp=None):
         if code is None:
@@ -277,31 +292,66 @@ class Verifier:
             os.close(descriptor)
         return results, len(cases), monotonic() - started
 
-    def run_case(self, descriptor, given, expected, *, seccomp=None):
+    def launch(self, descriptor, given, *, seccomp=None):
+        """Run one submission; return (exit code, raw stdout bytes) or raise on infrastructure faults."""
+        started = monotonic()
         with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
             process = subprocess.Popen(self.command(descriptor, seccomp=seccomp), stdin=subprocess.PIPE,
                                        stdout=stdout, stderr=stderr, pass_fds=(descriptor,), start_new_session=True)
             try:
-                process.communicate(given.encode("utf-8"), timeout=WALL_SECONDS + BACKSTOP_SECONDS)
+                process.communicate(given.encode("utf-8"), timeout=STARTUP_SECONDS + self.wall + BACKSTOP_SECONDS)
             except subprocess.TimeoutExpired:
                 try:
                     os.killpg(process.pid, 9)  # the launcher is not reaped yet, so its group id is still ours
                 except ProcessLookupError:
                     pass
                 process.wait()
-                raise RuntimeError("sandbox launcher missed its own deadline") from None
+                raise RuntimeError(f"sandbox launcher exceeded the {STARTUP_SECONDS:g}s startup budget plus its "
+                                   f"{self.wall:g}s execution limit") from None
+            finally:
+                self.record(monotonic() - started)
             stderr.seek(0)
             marker = stderr.readline(256)
             if marker != READY:
                 detail = (marker + stderr.read(1024)).decode("utf-8", errors="replace").strip()
                 raise SandboxStartError(process.returncode, detail or f"exit {process.returncode}")
-            if process.returncode == TIMEOUT_EXIT:
-                return "timeout", ""
             stdout.seek(0)
-            output = normalized(stdout.read(65537).decode("utf-8", errors="replace"))
-        if process.returncode != 0:
+            return process.returncode, stdout.read(65537)
+
+    def run_case(self, descriptor, given, expected, *, seccomp=None):
+        returncode, raw = self.launch(descriptor, given, seccomp=seccomp)
+        if returncode == TIMEOUT_EXIT:
+            return "timeout", ""
+        output = normalized(raw.decode("utf-8", errors="replace"))
+        if returncode != 0:
             return "error", ""
         return ("pass" if output == expected else "wrong"), output[:TEXT_CAP + 1]
+
+    def run(self, code, given=""):
+        """Execute one program once and return (`ok`/`timeout`/`error`, stdout text)."""
+        descriptor = sealed_code(code + "\n")
+        try:
+            returncode, raw = self.launch(descriptor, given)
+        finally:
+            os.close(descriptor)
+        if returncode == TIMEOUT_EXIT:
+            return "timeout", ""
+        text = raw.decode("utf-8", errors="replace")
+        return ("ok" if returncode == 0 else "error"), text
+
+    def record(self, seconds):
+        if self.latencies is None:
+            self.latencies = []
+        if len(self.latencies) < LATENCY_WINDOW:
+            self.latencies.append(seconds)
+
+    def timing(self):
+        values = sorted(self.latencies or [])
+        if not values:
+            return {"calls": 0}
+        pick = lambda q: round(1000 * values[min(len(values) - 1, int(q * len(values)))], 1)
+        return {"calls": len(values), "median_ms": pick(0.5), "p95_ms": pick(0.95), "max_ms": round(1000 * values[-1], 1),
+                "startup_budget_seconds": STARTUP_SECONDS}
 
     def uid_pids(self):
         """PIDs currently running under the sandbox uid."""
@@ -353,7 +403,7 @@ class Verifier:
         [(sleeping, _)], _, _ = self.evaluate("import time\ntime.sleep(30)", [("", "never")])
         wall = monotonic() - started
         [(spinning, _)], _, _ = self.evaluate("while True:\n    pass", [("", "never")])
-        if sleeping != "timeout" or wall > WALL_SECONDS + 1.5 or spinning not in ("error", "timeout"):
+        if sleeping != "timeout" or wall > self.wall + 1.5 or spinning not in ("error", "timeout"):
             raise RuntimeError(f"Sandbox limit preflight failed: sleep={sleeping} after {wall:.2f}s, cpu loop={spinning}")
         remaining = sorted(self.uid_pids() - before) if check_leftovers else []
         for _ in range(20):
@@ -370,4 +420,5 @@ class Verifier:
     def version(self):
         return {"executor": EXECUTOR, "mode": self.mode, "seccomp": self.seccomp, "python": self.python,
                 "python_sha256": sha256_file(SYSTEM_PYTHON.resolve()), "launcher_sha256": sha256_file(LAUNCHER),
-                "jail_sha256": self.jail_digest, "sandbox_uid": self.uid, "sandbox_gid": self.gid}
+                "jail_sha256": self.jail_digest, "sandbox_uid": self.uid, "sandbox_gid": self.gid,
+                "limits": {"wall_seconds": self.wall, "cpu_seconds": self.cpu, "memory_bytes": self.memory}}

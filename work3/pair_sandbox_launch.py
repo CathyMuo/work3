@@ -16,10 +16,12 @@ it never calls mount(2) and needs no Bubblewrap. Layers, outermost first:
 5. The launcher enforces the wall-clock limit itself, sends SIGKILL to PID 1 of the
    private PID namespace at the deadline and reaps it, leaving no orphans or zombies.
 
-Usage: pair_sandbox_launch.py MODE SECCOMP JAIL UID GID WALL_SECONDS CODE_FD
+Usage: pair_sandbox_launch.py MODE SECCOMP JAIL UID GID WALL_SECONDS CODE_FD [CPU_SECONDS AS_BYTES]
 MODE is `drop-first`, `map-helper` (both mount-free, for root) or `nonroot-ro`
 (uses a private read-only bind mount when invoked as a non-root user on dev hosts).
-SECCOMP is `on` or `off`.
+SECCOMP is `on` or `off`. CPU_SECONDS and AS_BYTES default to 1 and 256 MiB.
+The wall-clock timer starts after namespace and chroot setup, so WALL_SECONDS bounds
+execution only; callers budget setup separately.
 """
 
 import ctypes
@@ -55,8 +57,15 @@ TIMEOUT_EXIT = 124
 SETUP_EXIT = 125
 USERNS_DENIED_EXIT = 126
 SECCOMP_DENIED_EXIT = 127
-LIMITS = ((resource.RLIMIT_CPU, 1), (resource.RLIMIT_AS, 268435456), (resource.RLIMIT_FSIZE, 65536),
-          (resource.RLIMIT_NOFILE, 32), (resource.RLIMIT_NPROC, 1), (resource.RLIMIT_CORE, 0))
+DEFAULT_CPU_SECONDS, DEFAULT_AS_BYTES = 1, 268435456
+
+
+def limits(cpu_seconds=DEFAULT_CPU_SECONDS, as_bytes=DEFAULT_AS_BYTES):
+    return ((resource.RLIMIT_CPU, cpu_seconds), (resource.RLIMIT_AS, as_bytes), (resource.RLIMIT_FSIZE, 65536),
+            (resource.RLIMIT_NOFILE, 32), (resource.RLIMIT_NPROC, 1), (resource.RLIMIT_CORE, 0))
+
+
+LIMITS = limits()
 INNER = ("import os,sys; sys.stderr.write('WORK3_SANDBOX_READY\\n'); sys.stderr.flush(); "
          "s=os.pread(3,os.fstat(3).st_size,0); os.close(3); "
          "g={'__name__':'__main__','__file__':'/submission.py','__builtins__':__builtins__}; "
@@ -251,8 +260,16 @@ def enter_nonroot_ro(jail, parent):
 
 
 def main():
+    global LIMITS
     mode, seccomp_flag, jail, uid, gid, wall, code_fd = sys.argv[1:8]
     uid, gid, wall, code_fd = int(uid), int(gid), float(wall), int(code_fd)
+    if len(sys.argv) not in (8, 10):
+        fail("expected 7 or 9 arguments")
+    if len(sys.argv) == 10:
+        cpu_seconds, as_bytes = int(sys.argv[8]), int(sys.argv[9])
+        if not (1 <= cpu_seconds <= 60 and 64 * 2**20 <= as_bytes <= 8 * 2**30):
+            fail("cpu or memory limit out of range")
+        LIMITS = limits(cpu_seconds, as_bytes)
     use_seccomp = seccomp_flag == "on"
     if seccomp_flag not in ("on", "off"):
         fail(f"unknown seccomp mode {seccomp_flag}")

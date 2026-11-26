@@ -1,6 +1,8 @@
 # Work 3
 
-**2026-11-24 可验证反馈组合首筛就绪，待离线数据准备。** [厂内指南](docs/factory/feedback_pair.md) · [冻结协议](research/protocols/feedback_pair.md) · [研究计划](research/EXPERIMENT_PLAN.md)
+**2026-11-26 放大差距自博弈 P0a 就绪，待厂内运行。** [厂内指南](docs/factory/amp_gap_p0a.md) · [冻结协议](research/protocols/amp_gap_p0a.md) · [研究计划](research/EXPERIMENT_PLAN.md)
+
+可验证反馈组合已在方法层面停止，记录见[决策日志](research/DECISION_LOG.md)。
 
 历史 Wikipedia 研究已经收束。P0 通过，P1 NO-GO，NCP 已停止，P2 已取消。微批次消融完成，判定 NO EVIDENCE。
 
