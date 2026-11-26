@@ -234,13 +234,13 @@ class FakeVerifier:
         return {}
 
 
-def fake_vllm(honor_small=True, honor_full=True):
-    """A vLLM stand-in that rejects out-of-range prompt ids like 0.8.5 and samples a reserved id when unmasked."""
-    module, made = types.ModuleType("vllm"), []
+def fake_vllm():
+    """A vLLM stand-in that rejects out-of-range prompt ids like 0.8.5 and samples one reserved id per answer."""
+    module, made, calls = types.ModuleType("vllm"), [], []
 
     class SamplingParams:
-        def __init__(self, n=1, max_tokens=16, seed=None, allowed_token_ids=None, **rest):
-            self.n, self.max_tokens, self.seed, self.allowed_token_ids = n, max_tokens, seed, allowed_token_ids
+        def __init__(self, n=1, max_tokens=16, seed=None, **rest):
+            self.n, self.max_tokens, self.seed, self.rest = n, max_tokens, seed, rest
             made.append(self)
 
     class LLM:
@@ -248,27 +248,19 @@ def fake_vllm(honor_small=True, honor_full=True):
             pass
 
         def generate(self, prompts, sampling_params, use_tqdm=False):
-            batch = sampling_params if isinstance(sampling_params, list) else [sampling_params] * len(prompts)
+            calls.append(len(prompts))
             results = []
-            for prompt, params in zip(prompts, batch, strict=True):
+            for prompt, params in zip(prompts, sampling_params, strict=True):
                 if max(prompt["prompt_token_ids"]) > LIMIT - 1:
                     raise ValueError(f"Token id {max(prompt['prompt_token_ids'])} is out of vocabulary")
-                allowed = params.allowed_token_ids
-                small = allowed is not None and len(allowed) < 50
-                honored = allowed is not None and (honor_small if small else honor_full)
-                choices = []
-                for _ in range(params.n):
-                    if honored and small:
-                        tokens, text = [allowed[0]] * 4, "8888"
-                    else:
-                        tokens = [3, 4] + ([] if honored else [RESERVED]) + [0]
-                        text = "so \\boxed{4}\n```python\nprint(4)\n```"
-                    choices.append(types.SimpleNamespace(text=text, token_ids=tokens, finish_reason="stop"))
+                choices = [types.SimpleNamespace(text="so \\boxed{4}\n```python\nprint(4)\n```",
+                                                 token_ids=[3, 4, RESERVED, 0], finish_reason="stop")
+                           for _ in range(params.n)]
                 results.append(types.SimpleNamespace(outputs=choices))
             return results
 
     module.LLM, module.SamplingParams = LLM, SamplingParams
-    return module, made
+    return module, made, calls
 
 
 class TokenRangeTests(unittest.TestCase):
@@ -300,43 +292,45 @@ class TokenRangeTests(unittest.TestCase):
             self.assertLessEqual(PROMPT_CAP + budgets["short"] + 64 + budgets["force"], MAX_MODEL_LEN[False])
             self.assertLessEqual(PROMPT_CAP + 128 + budgets["think"], MAX_MODEL_LEN[True])
 
-    def run_worker(self, **honor):
+    def run_worker(self, chunk=64, filtered=True):
         import work3.amp_gap as amp
 
-        module, made = fake_vllm(**honor)
+        module, made, calls = fake_vllm()
         problems = [{"id": f"p{i}", "problem": f"What is {i}?", "level": 1 + i, "type": "Algebra", "gold": "num:4"}
                     for i in range(3)]
         settings = {"gpus": 1, "samples": 2, "budgets": amp.BUDGETS["smoke"], "hybrid": False, "max_model_len": 8192,
                     "gpu_memory": 0.5, "token_limit": LIMIT}
+        unfiltered = patch.object(amp, "known", lambda tokens, limit: (tokens, 0))
         with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules, {"vllm": module}), \
                 patch.object(amp, "Prompter", FakePrompter), patch.object(amp, "Verifier", FakeVerifier), \
+                patch.object(amp, "CHUNK", chunk), unfiltered if not filtered else contextlib.nullcontext(), \
                 contextlib.redirect_stdout(io.StringIO()):
             directory = Path(tmp)
             (directory / "plan.json").write_text(json.dumps({"model": "/fake", "settings": settings, "problems": problems}))
             amp.worker(types.SimpleNamespace(directory=directory, rank=0))
             rows = [json.loads(line) for line in (directory / "rank-0.jsonl").read_text().splitlines()]
             status = json.loads((directory / "status-0.json").read_text())
-        return rows, status, made
-
-    def test_every_arm_samples_inside_the_tokenizer_range(self):
-        rows, status, made = self.run_worker()
-        arms = [params for params in made if params.allowed_token_ids is not None and len(params.allowed_token_ids) > 2]
-        self.assertEqual(len(arms), 3 * 2 + 3 * 2 + 3 * 2)  # per-sample force/verify, plus one short and code per task
-        self.assertTrue(all(params.allowed_token_ids == list(range(LIMIT)) for params in arms))
-        self.assertEqual([(row["oov_tokens"], row["oov_dropped"]) for row in rows], [(0, 0)] * 3)
-        self.assertEqual(status["mask_selftest"]["allowed"], 2)
-        self.assertEqual(rows[0]["arms"]["short"]["answers"], ["num:4", "num:4"])
-
-    def test_worker_refuses_a_vllm_that_ignores_the_mask(self):
-        with self.assertRaisesRegex(RuntimeError, "ignored allowed_token_ids"):
-            self.run_worker(honor_small=False)
+        return rows, status, made, calls
 
     def test_sampled_reserved_ids_never_reach_a_prompt(self):
-        rows, status, _ = self.run_worker(honor_full=False)
+        rows, status, made, _ = self.run_worker()
+        self.assertFalse(any("allowed_token_ids" in params.rest for params in made))  # sampling stays as frozen
         self.assertEqual([row["oov_dropped"] for row in rows], [2, 2, 2])
         self.assertTrue(all(row["oov_tokens"] == 2 * 4 for row in rows))  # one per sample in four arms
-        self.assertEqual(status["oov_dropped"], 6)
+        self.assertEqual((status["done"], status["oov_dropped"]), (3, 6))
+        self.assertEqual(rows[0]["arms"]["force"]["answers"], ["num:4", "num:4"])
 
+    def test_without_the_filter_the_force_prompt_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "force: prompt token id 140 is outside the tokenizer range"):
+            self.run_worker(filtered=False)
+
+    def test_independent_arms_share_one_call_and_chunks_pipeline(self):
+        _, _, _, calls = self.run_worker()
+        self.assertEqual(calls, [3 + 3, 3 * 2 + 3 * 2])  # short+code prompts, then force+verify per sample
+        rows, status, _, calls = self.run_worker(chunk=1)
+        self.assertEqual([row["id"] for row in rows], ["p0", "p1", "p2"])
+        self.assertEqual((len(calls), status["done"]), (6, 3))
+        self.assertTrue(all(row["arms"]["code"]["finish"] == ["ok", "ok"] for row in rows))
 
 if __name__ == "__main__":
     unittest.main()

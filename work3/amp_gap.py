@@ -41,10 +41,12 @@ CHUNK = 64
 CODE_LIMITS = {"wall": 6.0, "cpu": 5, "memory": 1 << 30}
 CODE_THREADS = 2  # per GPU; namespace creation serializes under load (feedback #62)
 LIMITS = {"smoke": 1800, "p0a": 4 * 3600}
-# Amendment 1 (2026-11-26, before any P0a reading; feedback #63): every arm samples only token ids the tokenizer
-# knows. Qwen3 pads its embedding to 151,936 rows but the tokenizer ends at 151,668; vLLM rejects a prompt holding a
-# sampled reserved id, which crashed the force arm. The mask removes untrained rows from all arms alike.
-AMENDMENT = 1
+# Amendment 2 (2026-11-26, before any P0a reading; feedback #63). Qwen3 pads its embedding to 151,936 rows but the
+# tokenizer ends at 151,668; a sampled reserved id fed back as the force prompt made vLLM reject it. Sampling stays as
+# frozen; the force arm drops such ids (they carry no text) before feeding tokens back, and the summary counts them.
+# Amendment 1 (an allowed_token_ids mask, 046cea4, never run) was withdrawn: vLLM 0.8.5 re-copies the mask to the GPU
+# on every batch change, about 155 MB at the H800 default of 1,024 sequences.
+AMENDMENT = 2
 SYSTEM = "Please reason step by step, and put your final answer within \\boxed{}."
 CODE_SYSTEM = "You are a careful mathematician who solves problems by writing short, correct Python programs."
 WAIT = ("\n\nWait, let me carefully re-check every step of the solution above, fix any mistake, "
@@ -220,7 +222,7 @@ def strip_stop(tokens, stops):
 
 
 def known(tokens, limit):
-    """Drop ids outside the tokenizer range before feeding generated tokens back (a backstop to the sampling mask)."""
+    """Drop ids outside the tokenizer range before feeding generated tokens back; vLLM rejects them in prompts."""
     kept = [token for token in tokens if token < limit]
     return kept, len(tokens) - len(kept)
 
@@ -237,18 +239,6 @@ def room(arm, prompts, sampling, max_len, limit):
                              f"exceeds max_model_len {max_len}")
         if ids and max(ids) >= limit:
             raise ValueError(f"{arm}: prompt token id {max(ids)} is outside the tokenizer range [0, {limit})")
-
-
-def mask_selftest(engine, sampling_class, prompter):
-    """Prove this vLLM build enforces allowed_token_ids before relying on it: restrict to digits, sample freely."""
-    digits = sorted(set(prompter.encode("0123456789")))
-    sampling = sampling_class(n=4, temperature=1.0, max_tokens=16, seed=SEED, allowed_token_ids=digits)
-    outputs = engine.generate([{"prompt_token_ids": prompter.ids("Count from 1 to 30.")}], sampling_params=sampling,
-                              use_tqdm=False)
-    stray = sorted({token for choice in outputs[0].outputs for token in choice.token_ids} - set(digits))
-    if stray:
-        raise RuntimeError(f"vLLM ignored allowed_token_ids: sampled {stray[:5]} outside {digits}")
-    return {"allowed": len(digits), "sampled": sum(len(choice.token_ids) for choice in outputs[0].outputs)}
 
 
 def seed_for(task_id, arm, index=0):
@@ -284,93 +274,113 @@ def worker(args):
     limit, max_len = settings["token_limit"], settings["max_model_len"]
     if prompter.limit != limit:
         raise RuntimeError(f"tokenizer range {prompter.limit} differs from the planned {limit}")
-    allowed = list(range(limit))
     stops = prompter.stop_ids()
     wait_ids = prompter.encode(WAIT)
-    engine = LLM(model=plan["model"], tokenizer=plan["model"], dtype="bfloat16", max_model_len=settings["max_model_len"],
+    engine = LLM(model=plan["model"], tokenizer=plan["model"], dtype="bfloat16", max_model_len=max_len,
                  gpu_memory_utilization=settings["gpu_memory"], seed=SEED + rank, enable_prefix_caching=True,
                  generation_config="vllm")
     verifier = Verifier(**CODE_LIMITS)
-    selftest = mask_selftest(engine, SamplingParams, prompter)
-    print(json.dumps({"rank": rank, "mask_selftest": selftest, "token_limit": limit}), flush=True)
 
     def params(arm, n, seed):
         return SamplingParams(n=n, temperature=TEMPERATURE, top_p=TOP_P, max_tokens=budgets[arm], seed=seed,
-                              stop_token_ids=stops, skip_special_tokens=True, allowed_token_ids=allowed)
+                              stop_token_ids=stops, skip_special_tokens=True)
 
-    def generate(arm, prompts, sampling):
-        room(arm, prompts, sampling, max_len, limit)
+    def generate(*groups):
+        """One vLLM call for several independent arms: a fuller batch and one shared tail instead of one per arm."""
+        prompts, sampling, sizes = [], [], []
+        for arm, arm_prompts, arm_params in groups:
+            room(arm, arm_prompts, arm_params, max_len, limit)
+            prompts += arm_prompts
+            sampling += arm_params
+            sizes.append(len(arm_prompts))
         outputs = engine.generate([{"prompt_token_ids": ids} for ids in prompts], sampling_params=sampling, use_tqdm=False)
-        return [[(choice.text, list(choice.token_ids), choice.finish_reason) for choice in output.outputs]
-                for output in outputs]
+        results = [[(choice.text, list(choice.token_ids), choice.finish_reason) for choice in output.outputs]
+                   for output in outputs]
+        split, start = [], 0
+        for size in sizes:
+            split.append(results[start:start + size])
+            start += size
+        return split
 
-    done, generated, out_of_range, dropped_total = 0, 0, 0, 0
+    def launch(chunk, pool):
+        """Generate every arm for a chunk; programs start executing while the dependent arms are generated."""
+        prompts = [prompter.ids(task["problem"]) for task in chunk]
+        groups = [("short", prompts, [params("short", k, seed_for(task["id"], "short")) for task in chunk]),
+                  ("code", [prompter.ids(CODE.format(problem=task["problem"]), system=CODE_SYSTEM) for task in chunk],
+                   [params("code", k, seed_for(task["id"], "code")) for task in chunk])]
+        if hybrid:
+            groups.append(("think", [prompter.ids(task["problem"], thinking=True) for task in chunk],
+                           [params("think", k, seed_for(task["id"], "think")) for task in chunk]))
+        short, code, *rest = generate(*groups)
+        runs = [pool.submit(execute, verifier, extract_code(text)) for outputs in code for text, _, _ in outputs]
+        force_prompts, verify_prompts, force_params, verify_params, dropped = [], [], [], [], []
+        for task, ids, outputs in zip(chunk, prompts, short, strict=True):
+            for index, (text, tokens, _) in enumerate(outputs):
+                prefix, removed = known(strip_stop(tokens, stops), limit)
+                force_prompts.append(ids + prefix + wait_ids)
+                dropped.append(removed)
+                force_params.append(params("force", 1, seed_for(task["id"], "force", index)))
+                verify_prompts.append(prompter.ids(VERIFY.format(problem=task["problem"], candidate=text[-CANDIDATE_CAP:])))
+                verify_params.append(params("verify", 1, seed_for(task["id"], "verify", index)))
+        force, verify = generate(("force", force_prompts, force_params), ("verify", verify_prompts, verify_params))
+        return {"chunk": chunk, "prompts": prompts, "short": short, "force": force, "verify": verify, "code": code,
+                "think": rest[0] if hybrid else None, "runs": runs, "dropped": dropped}
+
+    totals = {"done": 0, "generated_tokens": 0, "oov_tokens": 0, "oov_dropped": 0}
     status_file = args.directory / f"status-{rank}.json"
+
+    def write_chunk(state, stream, texts):
+        """Write a chunk once its programs have run (normally while the next chunk was generating)."""
+        executed = [run.result() for run in state["runs"]]
+        short, force, verify, code, think, dropped = (state[key] for key in
+                                                      ("short", "force", "verify", "code", "think", "dropped"))
+        for position, (task, ids) in enumerate(zip(state["chunk"], state["prompts"], strict=True)):
+            window = slice(position * k, (position + 1) * k)
+            short_out = short[position]
+            force_out = [choice[0] for choice in force[window]]
+            verify_out = [choice[0] for choice in verify[window]]
+            code_out, runs = code[position], executed[window]
+            arms = {
+                "short": [(canonical(last_boxed(text)), len(tokens), finish) for text, tokens, finish in short_out],
+                "force": [(canonical(last_boxed(base[0] + WAIT + text)), len(tokens), finish)
+                          for base, (text, tokens, finish) in zip(short_out, force_out, strict=True)],
+                "verify": [(canonical(last_boxed(text)), len(tokens), finish) for text, tokens, finish in verify_out],
+                "code": [(answer, len(tokens), outcome if finish != "length" else f"{outcome}+length")
+                         for (_, tokens, finish), (answer, outcome) in zip(code_out, runs, strict=True)],
+            }
+            if hybrid:
+                arms["think"] = [(canonical(last_boxed(text)), len(tokens), finish)
+                                 for text, tokens, finish in think[position]]
+            oov = sum(outside(choices, limit) for choices in (short_out, force_out, verify_out, code_out))
+            oov += outside(think[position], limit) if hybrid else 0
+            row = {"id": task["id"], "level": task["level"], "type": task["type"], "gold": task["gold"],
+                   "prompt_tokens": len(ids), "oov_tokens": oov, "oov_dropped": sum(dropped[window]),
+                   "arms": {arm: {"answers": [item[0] for item in items], "tokens": [item[1] for item in items],
+                                  "finish": [item[2] for item in items]} for arm, items in arms.items()}}
+            stream.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+            texts.write(json.dumps({"id": task["id"], "short": [c[0] for c in short_out], "force": [c[0] for c in force_out],
+                                    "verify": [c[0] for c in verify_out], "code": [c[0] for c in code_out],
+                                    "think": [c[0] for c in think[position]] if hybrid else None},
+                                   ensure_ascii=False) + "\n")
+            totals["generated_tokens"] += sum(sum(arm["tokens"]) for arm in row["arms"].values())
+            totals["oov_tokens"] += oov
+            totals["oov_dropped"] += row["oov_dropped"]
+            totals["done"] += 1
+        stream.flush()
+        atomic_json(status_file, {**totals, "total": len(tasks), "sandbox": verifier.timing(), "updated_at": int(time())})
+        print(json.dumps({"rank": rank, **totals, "total": len(tasks)}), flush=True)
+
     with (args.directory / f"rank-{rank}.jsonl").open("x", encoding="utf-8") as stream, \
             gzip.open(args.directory / f"texts-{rank}.jsonl.gz", "wt", encoding="utf-8") as texts, \
             ThreadPoolExecutor(max_workers=CODE_THREADS) as pool:
+        pending = None
         for offset in range(0, len(tasks), CHUNK):
-            chunk = tasks[offset:offset + CHUNK]
-            prompts = [prompter.ids(task["problem"]) for task in chunk]
-            short = generate("short", prompts, [params("short", k, seed_for(task["id"], "short")) for task in chunk])
-            force_prompts, verify_prompts, force_params, verify_params, dropped = [], [], [], [], []
-            for task, ids, outputs in zip(chunk, prompts, short, strict=True):
-                for index, (text, tokens, _) in enumerate(outputs):
-                    prefix, removed = known(strip_stop(tokens, stops), limit)
-                    force_prompts.append(ids + prefix + wait_ids)
-                    dropped.append(removed)
-                    force_params.append(params("force", 1, seed_for(task["id"], "force", index)))
-                    verify_prompts.append(prompter.ids(VERIFY.format(problem=task["problem"], candidate=text[-CANDIDATE_CAP:])))
-                    verify_params.append(params("verify", 1, seed_for(task["id"], "verify", index)))
-            force = generate("force", force_prompts, force_params)
-            verify = generate("verify", verify_prompts, verify_params)
-            code_prompts = [prompter.ids(CODE.format(problem=task["problem"]), system=CODE_SYSTEM) for task in chunk]
-            code = generate("code", code_prompts, [params("code", k, seed_for(task["id"], "code")) for task in chunk])
-            programs = [extract_code(text) for outputs in code for text, _, _ in outputs]
-            executed = list(pool.map(lambda program: execute(verifier, program), programs))
-            think = None
-            if hybrid:
-                think_prompts = [prompter.ids(task["problem"], thinking=True) for task in chunk]
-                think = generate("think", think_prompts,
-                                 [params("think", k, seed_for(task["id"], "think")) for task in chunk])
-            for position, (task, ids) in enumerate(zip(chunk, prompts, strict=True)):
-                window = slice(position * k, (position + 1) * k)
-                short_out = short[position]
-                force_out = [choice[0] for choice in force[window]]
-                verify_out = [choice[0] for choice in verify[window]]
-                code_out, runs = code[position], executed[window]
-                arms = {
-                    "short": [(canonical(last_boxed(text)), len(tokens), finish) for text, tokens, finish in short_out],
-                    "force": [(canonical(last_boxed(base[0] + WAIT + text)), len(tokens), finish)
-                              for base, (text, tokens, finish) in zip(short_out, force_out, strict=True)],
-                    "verify": [(canonical(last_boxed(text)), len(tokens), finish) for text, tokens, finish in verify_out],
-                    "code": [(answer, len(tokens), outcome if finish != "length" else f"{outcome}+length")
-                             for (_, tokens, finish), (answer, outcome) in zip(code_out, runs, strict=True)],
-                }
-                if hybrid:
-                    arms["think"] = [(canonical(last_boxed(text)), len(tokens), finish)
-                                     for text, tokens, finish in think[position]]
-                oov = sum(outside(choices, limit) for choices in (short_out, force_out, verify_out, code_out))
-                oov += outside(think[position], limit) if hybrid else 0
-                row = {"id": task["id"], "level": task["level"], "type": task["type"], "gold": task["gold"],
-                       "prompt_tokens": len(ids), "oov_tokens": oov, "oov_dropped": sum(dropped[window]),
-                       "arms": {arm: {"answers": [item[0] for item in items], "tokens": [item[1] for item in items],
-                                      "finish": [item[2] for item in items]} for arm, items in arms.items()}}
-                stream.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
-                texts.write(json.dumps({"id": task["id"], "short": [c[0] for c in short_out], "force": [c[0] for c in force_out],
-                                        "verify": [c[0] for c in verify_out], "code": [c[0] for c in code_out],
-                                        "think": [c[0] for c in think[position]] if hybrid else None},
-                                       ensure_ascii=False) + "\n")
-                generated += sum(sum(arm["tokens"]) for arm in row["arms"].values())
-                out_of_range += oov
-                dropped_total += row["oov_dropped"]
-                done += 1
-            stream.flush()
-            atomic_json(status_file, {"done": done, "total": len(tasks), "generated_tokens": generated,
-                                      "oov_tokens": out_of_range, "oov_dropped": dropped_total,
-                                      "mask_selftest": selftest, "sandbox": verifier.timing(), "updated_at": int(time())})
-            print(json.dumps({"rank": rank, "done": done, "total": len(tasks), "generated_tokens": generated,
-                              "oov_tokens": out_of_range, "oov_dropped": dropped_total}), flush=True)
+            state = launch(tasks[offset:offset + CHUNK], pool)
+            if pending is not None:
+                write_chunk(pending, stream, texts)
+            pending = state
+        if pending is not None:
+            write_chunk(pending, stream, texts)
 
 
 # ----------------------------------------------------------------------------- orchestration
@@ -475,10 +485,8 @@ def experiment(args, directory, progress, started):
                        for arm in rows[0]["arms"])
         infra = max(arm["infra_rate"] or 0 for arm in result["arms"].values())
         result["p0a_gate_preview"] = result.pop("verdict")
-        masked = token_range["generated_outside"] == 0
-        result["verdict"] = "PASS" if answered and code_ok > 0 and infra <= 0.01 and masked else "FAIL"
-        result["smoke_checks"] = {"every_arm_answered": answered, "executed_programs_ok": code_ok, "max_infra_rate": infra,
-                                  "generated_outside_tokenizer": token_range["generated_outside"]}
+        result["verdict"] = "PASS" if answered and code_ok > 0 and infra <= 0.01 else "FAIL"
+        result["smoke_checks"] = {"every_arm_answered": answered, "executed_programs_ok": code_ok, "max_infra_rate": infra}
     return result
 
 
