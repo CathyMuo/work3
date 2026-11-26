@@ -2,15 +2,30 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-26",
-  "current_stage": "放大差距自博弈 · P0a 高低预算一致性校准",
-  "status": "可验证反馈组合（feedback_pair_v1）在方法层面停止，工作三改为 RSI 方向的放大差距自博弈，先做纯推理 P0a。反馈 #63：主模型冒烟 PASS，正式 P0a 因 force 臂把采到的分词器范围外保留 token id 接回提示、被 vLLM 拒收而 INCOMPLETE；协议修订 2 改为接回前过滤（采样不变），并合并生成调用、并行程序执行以加速，冒烟与正式运行均四卡。尚无新方法结果。",
-  "next_action": "厂内拉取修订 1 提交，暂停保活训练，按 docs/factory/amp_gap_p0a.md 重跑主模型冒烟 amp-gap-base-smoke-v2 与正式 P0a amp-gap-base-p0a-v2，再跑副模型。",
+  "current_stage": "选题复核 · 放大差距自博弈已停止",
+  "status": "放大差距自博弈 P0a 在 1cd4447（协议修订 2）下完整跑完，主模型 Qwen3-4B-Base 与副模型 Qwen3-4B 均判 NO-GO：G1 校准通过，G3 差距集占比最高 4.8%（门槛 10%），主模型高预算臂平均差距全为负。该方向停止。冻结备选「可保证完备性的智能体检索」经同日复核不启动：方法组合已有先例（arXiv 2506.05497、2611.15835），且 QAMPARI/QUEST 的瓶颈在检索器上限而非停止。另查的五个候选均有直接先例或上限过低。当前没有通过复核的方法候选。",
+  "next_action": "无待厂内执行的任务；保活训练照常。待用户确定方向后冻结新协议并发布指南。厂内保留四个 amp-gap 运行目录（含 rank-*.jsonl 与 texts-*.jsonl.gz）。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
     "decide_by": "2026-12-15"
   },
   "experiment_results": [
+    {
+      "id": "AMP_GAP_P0A",
+      "date": "2026-11-26",
+      "release": "1cd4447",
+      "protocol": "amp_gap_p0a_v1",
+      "protocol_amendment": 2,
+      "verdict": "NO-GO",
+      "problems": 1000,
+      "samples_per_arm": 8,
+      "selection_sha256": "978ea2bbb24bed590c4316037573d3f5a6f1a42be8bdc138d30803f72d103feb",
+      "base": {"model": "Qwen3-4B-Base", "run": "amp-gap-base-p0a-v2", "seconds": 974.4, "pass_at_1": {"short": 0.667, "force": 0.32, "verify": 0.554, "code": 0.35}, "majority_accuracy": {"short": 0.848, "force": 0.771, "verify": 0.833, "code": 0.627}, "mean_gap": {"force": -0.36, "verify": -0.117, "code": -0.299}, "max_gap_set_share": {"arm": "code", "tau": 0.75, "share": 0.022}, "rzero_band": {"n": 526, "low_label_precision": 0.7947, "wilson_low": 0.7581}, "token_range": {"limit": 151669, "generated_outside": 126, "dropped_from_feedback": 10}},
+      "hybrid": {"model": "Qwen3-4B", "run": "amp-gap-hybrid-p0a-v1", "seconds": 2353.2, "pass_at_1": {"short": 0.838, "force": 0.5, "verify": 0.854, "code": 0.607, "think": 0.877}, "majority_accuracy": {"short": 0.895, "force": 0.874, "verify": 0.9, "code": 0.708, "think": 0.928}, "mean_gap": {"force": -0.348, "verify": 0.019, "code": -0.177, "think": 0.027}, "max_gap_set_share": {"arm": "think", "tau": 0.75, "share": 0.048, "precision": 0.8542}, "rzero_band": {"n": 164, "low_label_precision": 0.6829}, "token_range": {"generated_outside": 0}},
+      "gates": {"G1_calibration": "pass (both models)", "G3_gap_share": "fail (max 0.048 < 0.10)"},
+      "note": "Numbers transcribed from factory feedback #64 (docx); summary JSONs stay at the factory. Frozen fallback not launched after same-day audit."
+    },
     {
       "id": "BUDGET_RLVR_PAIRED_PILOT",
       "date": "2026-11-24",
