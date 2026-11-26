@@ -1,7 +1,10 @@
+import contextlib
 import gzip
+import io
 import json
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -193,6 +196,146 @@ class ExecuteRetryTests(unittest.TestCase):
         with patch("work3.amp_gap.sleep"):
             self.assertEqual(execute(Flaky(), "print(42)"), ("num:42", "ok"))
             self.assertEqual(execute(Broken(), "print(42)"), (None, "infra"))
+
+
+LIMIT, RESERVED = 100, 140  # stand-ins for Qwen3's 151,669 known ids and a sampled reserved row (feedback #63)
+
+
+class FakeTokenizer:
+    def __init__(self, top):
+        self.top = top
+
+    def get_vocab(self):
+        return {"a": 0, "b": self.top}
+
+
+class FakePrompter:
+    def __init__(self, model, hybrid):
+        self.chat, self.hybrid, self.limit = True, hybrid, LIMIT
+
+    def ids(self, user, system=None, thinking=False):
+        return [5, 6, 7]
+
+    def encode(self, text):
+        return [8, 9] if text == "0123456789" else [7, 7]
+
+    def stop_ids(self):
+        return [0]
+
+
+class FakeVerifier:
+    def __init__(self, **limits):
+        pass
+
+    def run(self, code):
+        return "ok", "4\n"
+
+    def timing(self):
+        return {}
+
+
+def fake_vllm(honor_small=True, honor_full=True):
+    """A vLLM stand-in that rejects out-of-range prompt ids like 0.8.5 and samples a reserved id when unmasked."""
+    module, made = types.ModuleType("vllm"), []
+
+    class SamplingParams:
+        def __init__(self, n=1, max_tokens=16, seed=None, allowed_token_ids=None, **rest):
+            self.n, self.max_tokens, self.seed, self.allowed_token_ids = n, max_tokens, seed, allowed_token_ids
+            made.append(self)
+
+    class LLM:
+        def __init__(self, **options):
+            pass
+
+        def generate(self, prompts, sampling_params, use_tqdm=False):
+            batch = sampling_params if isinstance(sampling_params, list) else [sampling_params] * len(prompts)
+            results = []
+            for prompt, params in zip(prompts, batch, strict=True):
+                if max(prompt["prompt_token_ids"]) > LIMIT - 1:
+                    raise ValueError(f"Token id {max(prompt['prompt_token_ids'])} is out of vocabulary")
+                allowed = params.allowed_token_ids
+                small = allowed is not None and len(allowed) < 50
+                honored = allowed is not None and (honor_small if small else honor_full)
+                choices = []
+                for _ in range(params.n):
+                    if honored and small:
+                        tokens, text = [allowed[0]] * 4, "8888"
+                    else:
+                        tokens = [3, 4] + ([] if honored else [RESERVED]) + [0]
+                        text = "so \\boxed{4}\n```python\nprint(4)\n```"
+                    choices.append(types.SimpleNamespace(text=text, token_ids=tokens, finish_reason="stop"))
+                results.append(types.SimpleNamespace(outputs=choices))
+            return results
+
+    module.LLM, module.SamplingParams = LLM, SamplingParams
+    return module, made
+
+
+class TokenRangeTests(unittest.TestCase):
+    def test_limit_is_the_smaller_of_tokenizer_and_embedding(self):
+        from work3.amp_gap import token_limit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(token_limit(FakeTokenizer(151668), tmp), 151669)
+            Path(tmp, "config.json").write_text(json.dumps({"vocab_size": 151936}))
+            self.assertEqual(token_limit(FakeTokenizer(151668), tmp), 151669)
+            Path(tmp, "config.json").write_text(json.dumps({"vocab_size": 1000}))
+            self.assertEqual(token_limit(FakeTokenizer(151668), tmp), 1000)
+
+    def test_feedback_filter_and_prompt_guard(self):
+        from work3.amp_gap import known, room
+
+        self.assertEqual(known([1, 150, 2, 100], 100), ([1, 2], 2))
+        budget = types.SimpleNamespace(max_tokens=10)
+        room("force", [[1] * 5], [budget], 15, 100)
+        with self.assertRaisesRegex(ValueError, "exceeds max_model_len"):
+            room("force", [[1] * 6], [budget], 15, 100)
+        with self.assertRaisesRegex(ValueError, "outside the tokenizer range"):
+            room("force", [[1, 100]], [budget], 15, 100)
+
+    def test_budgets_fit_the_context_window(self):
+        from work3.amp_gap import BUDGETS, MAX_MODEL_LEN, PROMPT_CAP
+
+        for budgets in BUDGETS.values():
+            self.assertLessEqual(PROMPT_CAP + budgets["short"] + 64 + budgets["force"], MAX_MODEL_LEN[False])
+            self.assertLessEqual(PROMPT_CAP + 128 + budgets["think"], MAX_MODEL_LEN[True])
+
+    def run_worker(self, **honor):
+        import work3.amp_gap as amp
+
+        module, made = fake_vllm(**honor)
+        problems = [{"id": f"p{i}", "problem": f"What is {i}?", "level": 1 + i, "type": "Algebra", "gold": "num:4"}
+                    for i in range(3)]
+        settings = {"gpus": 1, "samples": 2, "budgets": amp.BUDGETS["smoke"], "hybrid": False, "max_model_len": 8192,
+                    "gpu_memory": 0.5, "token_limit": LIMIT}
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules, {"vllm": module}), \
+                patch.object(amp, "Prompter", FakePrompter), patch.object(amp, "Verifier", FakeVerifier), \
+                contextlib.redirect_stdout(io.StringIO()):
+            directory = Path(tmp)
+            (directory / "plan.json").write_text(json.dumps({"model": "/fake", "settings": settings, "problems": problems}))
+            amp.worker(types.SimpleNamespace(directory=directory, rank=0))
+            rows = [json.loads(line) for line in (directory / "rank-0.jsonl").read_text().splitlines()]
+            status = json.loads((directory / "status-0.json").read_text())
+        return rows, status, made
+
+    def test_every_arm_samples_inside_the_tokenizer_range(self):
+        rows, status, made = self.run_worker()
+        arms = [params for params in made if params.allowed_token_ids is not None and len(params.allowed_token_ids) > 2]
+        self.assertEqual(len(arms), 3 * 2 + 3 * 2 + 3 * 2)  # per-sample force/verify, plus one short and code per task
+        self.assertTrue(all(params.allowed_token_ids == list(range(LIMIT)) for params in arms))
+        self.assertEqual([(row["oov_tokens"], row["oov_dropped"]) for row in rows], [(0, 0)] * 3)
+        self.assertEqual(status["mask_selftest"]["allowed"], 2)
+        self.assertEqual(rows[0]["arms"]["short"]["answers"], ["num:4", "num:4"])
+
+    def test_worker_refuses_a_vllm_that_ignores_the_mask(self):
+        with self.assertRaisesRegex(RuntimeError, "ignored allowed_token_ids"):
+            self.run_worker(honor_small=False)
+
+    def test_sampled_reserved_ids_never_reach_a_prompt(self):
+        rows, status, _ = self.run_worker(honor_full=False)
+        self.assertEqual([row["oov_dropped"] for row in rows], [2, 2, 2])
+        self.assertTrue(all(row["oov_tokens"] == 2 * 4 for row in rows))  # one per sample in four arms
+        self.assertEqual(status["oov_dropped"], 6)
 
 
 if __name__ == "__main__":

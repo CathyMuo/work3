@@ -41,6 +41,10 @@ CHUNK = 64
 CODE_LIMITS = {"wall": 6.0, "cpu": 5, "memory": 1 << 30}
 CODE_THREADS = 2  # per GPU; namespace creation serializes under load (feedback #62)
 LIMITS = {"smoke": 1800, "p0a": 4 * 3600}
+# Amendment 1 (2026-11-26, before any P0a reading; feedback #63): every arm samples only token ids the tokenizer
+# knows. Qwen3 pads its embedding to 151,936 rows but the tokenizer ends at 151,668; vLLM rejects a prompt holding a
+# sampled reserved id, which crashed the force arm. The mask removes untrained rows from all arms alike.
+AMENDMENT = 1
 SYSTEM = "Please reason step by step, and put your final answer within \\boxed{}."
 CODE_SYSTEM = "You are a careful mathematician who solves problems by writing short, correct Python programs."
 WAIT = ("\n\nWait, let me carefully re-check every step of the solution above, fix any mistake, "
@@ -158,6 +162,7 @@ class Prompter:
         self.tokenizer = AutoTokenizer.from_pretrained(self.model, local_files_only=True, use_fast=True)
         self.chat = bool(getattr(self.tokenizer, "chat_template", None))
         self.hybrid = hybrid
+        self.limit = token_limit(self.tokenizer, self.model)
         if hybrid and not self.chat:
             raise ValueError("--hybrid-thinking needs a tokenizer chat template with enable_thinking")
 
@@ -186,6 +191,16 @@ class Prompter:
         return sorted(ids)
 
 
+def token_limit(tokenizer, model):
+    """One past the largest id that both the tokenizer and the model embedding know.
+
+    vLLM rejects any prompt id above the tokenizer's largest id, while sampling ranges over the padded embedding."""
+    limit = max(tokenizer.get_vocab().values()) + 1
+    config = Path(model) / "config.json"
+    size = load(config).get("vocab_size") if config.is_file() else None
+    return min(limit, size) if isinstance(size, int) else limit
+
+
 def model_inputs(model):
     model = Path(model).resolve(strict=True)
     weights = sorted(model.glob("*.safetensors"))
@@ -202,6 +217,38 @@ def strip_stop(tokens, stops):
     while tokens and tokens[-1] in stops:
         tokens.pop()
     return tokens
+
+
+def known(tokens, limit):
+    """Drop ids outside the tokenizer range before feeding generated tokens back (a backstop to the sampling mask)."""
+    kept = [token for token in tokens if token < limit]
+    return kept, len(tokens) - len(kept)
+
+
+def outside(choices, limit):
+    return sum(token >= limit for _, tokens, _ in choices for token in tokens)
+
+
+def room(arm, prompts, sampling, max_len, limit):
+    """Fail with an explicit message before vLLM does: each prompt must fit with its whole budget, in known ids."""
+    for ids, params in zip(prompts, sampling, strict=True):
+        if len(ids) + params.max_tokens > max_len:
+            raise ValueError(f"{arm}: prompt of {len(ids)} tokens plus a budget of {params.max_tokens} "
+                             f"exceeds max_model_len {max_len}")
+        if ids and max(ids) >= limit:
+            raise ValueError(f"{arm}: prompt token id {max(ids)} is outside the tokenizer range [0, {limit})")
+
+
+def mask_selftest(engine, sampling_class, prompter):
+    """Prove this vLLM build enforces allowed_token_ids before relying on it: restrict to digits, sample freely."""
+    digits = sorted(set(prompter.encode("0123456789")))
+    sampling = sampling_class(n=4, temperature=1.0, max_tokens=16, seed=SEED, allowed_token_ids=digits)
+    outputs = engine.generate([{"prompt_token_ids": prompter.ids("Count from 1 to 30.")}], sampling_params=sampling,
+                              use_tqdm=False)
+    stray = sorted({token for choice in outputs[0].outputs for token in choice.token_ids} - set(digits))
+    if stray:
+        raise RuntimeError(f"vLLM ignored allowed_token_ids: sampled {stray[:5]} outside {digits}")
+    return {"allowed": len(digits), "sampled": sum(len(choice.token_ids) for choice in outputs[0].outputs)}
 
 
 def seed_for(task_id, arm, index=0):
@@ -234,23 +281,30 @@ def worker(args):
     tasks = [row for index, row in enumerate(plan["problems"]) if index % settings["gpus"] == rank]
     budgets, k, hybrid = settings["budgets"], settings["samples"], settings["hybrid"]
     prompter = Prompter(plan["model"], hybrid)
+    limit, max_len = settings["token_limit"], settings["max_model_len"]
+    if prompter.limit != limit:
+        raise RuntimeError(f"tokenizer range {prompter.limit} differs from the planned {limit}")
+    allowed = list(range(limit))
     stops = prompter.stop_ids()
     wait_ids = prompter.encode(WAIT)
     engine = LLM(model=plan["model"], tokenizer=plan["model"], dtype="bfloat16", max_model_len=settings["max_model_len"],
                  gpu_memory_utilization=settings["gpu_memory"], seed=SEED + rank, enable_prefix_caching=True,
                  generation_config="vllm")
     verifier = Verifier(**CODE_LIMITS)
+    selftest = mask_selftest(engine, SamplingParams, prompter)
+    print(json.dumps({"rank": rank, "mask_selftest": selftest, "token_limit": limit}), flush=True)
 
     def params(arm, n, seed):
         return SamplingParams(n=n, temperature=TEMPERATURE, top_p=TOP_P, max_tokens=budgets[arm], seed=seed,
-                              stop_token_ids=stops, skip_special_tokens=True)
+                              stop_token_ids=stops, skip_special_tokens=True, allowed_token_ids=allowed)
 
-    def generate(prompts, sampling):
+    def generate(arm, prompts, sampling):
+        room(arm, prompts, sampling, max_len, limit)
         outputs = engine.generate([{"prompt_token_ids": ids} for ids in prompts], sampling_params=sampling, use_tqdm=False)
         return [[(choice.text, list(choice.token_ids), choice.finish_reason) for choice in output.outputs]
                 for output in outputs]
 
-    done, generated = 0, 0
+    done, generated, out_of_range, dropped_total = 0, 0, 0, 0
     status_file = args.directory / f"status-{rank}.json"
     with (args.directory / f"rank-{rank}.jsonl").open("x", encoding="utf-8") as stream, \
             gzip.open(args.directory / f"texts-{rank}.jsonl.gz", "wt", encoding="utf-8") as texts, \
@@ -258,24 +312,27 @@ def worker(args):
         for offset in range(0, len(tasks), CHUNK):
             chunk = tasks[offset:offset + CHUNK]
             prompts = [prompter.ids(task["problem"]) for task in chunk]
-            short = generate(prompts, [params("short", k, seed_for(task["id"], "short")) for task in chunk])
-            force_prompts, verify_prompts, force_params, verify_params = [], [], [], []
+            short = generate("short", prompts, [params("short", k, seed_for(task["id"], "short")) for task in chunk])
+            force_prompts, verify_prompts, force_params, verify_params, dropped = [], [], [], [], []
             for task, ids, outputs in zip(chunk, prompts, short, strict=True):
                 for index, (text, tokens, _) in enumerate(outputs):
-                    force_prompts.append(ids + strip_stop(tokens, stops) + wait_ids)
+                    prefix, removed = known(strip_stop(tokens, stops), limit)
+                    force_prompts.append(ids + prefix + wait_ids)
+                    dropped.append(removed)
                     force_params.append(params("force", 1, seed_for(task["id"], "force", index)))
                     verify_prompts.append(prompter.ids(VERIFY.format(problem=task["problem"], candidate=text[-CANDIDATE_CAP:])))
                     verify_params.append(params("verify", 1, seed_for(task["id"], "verify", index)))
-            force = generate(force_prompts, force_params)
-            verify = generate(verify_prompts, verify_params)
+            force = generate("force", force_prompts, force_params)
+            verify = generate("verify", verify_prompts, verify_params)
             code_prompts = [prompter.ids(CODE.format(problem=task["problem"]), system=CODE_SYSTEM) for task in chunk]
-            code = generate(code_prompts, [params("code", k, seed_for(task["id"], "code")) for task in chunk])
+            code = generate("code", code_prompts, [params("code", k, seed_for(task["id"], "code")) for task in chunk])
             programs = [extract_code(text) for outputs in code for text, _, _ in outputs]
             executed = list(pool.map(lambda program: execute(verifier, program), programs))
             think = None
             if hybrid:
                 think_prompts = [prompter.ids(task["problem"], thinking=True) for task in chunk]
-                think = generate(think_prompts, [params("think", k, seed_for(task["id"], "think")) for task in chunk])
+                think = generate("think", think_prompts,
+                                 [params("think", k, seed_for(task["id"], "think")) for task in chunk])
             for position, (task, ids) in enumerate(zip(chunk, prompts, strict=True)):
                 window = slice(position * k, (position + 1) * k)
                 short_out = short[position]
@@ -293,8 +350,10 @@ def worker(args):
                 if hybrid:
                     arms["think"] = [(canonical(last_boxed(text)), len(tokens), finish)
                                      for text, tokens, finish in think[position]]
+                oov = sum(outside(choices, limit) for choices in (short_out, force_out, verify_out, code_out))
+                oov += outside(think[position], limit) if hybrid else 0
                 row = {"id": task["id"], "level": task["level"], "type": task["type"], "gold": task["gold"],
-                       "prompt_tokens": len(ids),
+                       "prompt_tokens": len(ids), "oov_tokens": oov, "oov_dropped": sum(dropped[window]),
                        "arms": {arm: {"answers": [item[0] for item in items], "tokens": [item[1] for item in items],
                                       "finish": [item[2] for item in items]} for arm, items in arms.items()}}
                 stream.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
@@ -303,10 +362,15 @@ def worker(args):
                                         "think": [c[0] for c in think[position]] if hybrid else None},
                                        ensure_ascii=False) + "\n")
                 generated += sum(sum(arm["tokens"]) for arm in row["arms"].values())
+                out_of_range += oov
+                dropped_total += row["oov_dropped"]
                 done += 1
             stream.flush()
             atomic_json(status_file, {"done": done, "total": len(tasks), "generated_tokens": generated,
-                                      "sandbox": verifier.timing(), "updated_at": int(time())})
+                                      "oov_tokens": out_of_range, "oov_dropped": dropped_total,
+                                      "mask_selftest": selftest, "sandbox": verifier.timing(), "updated_at": int(time())})
+            print(json.dumps({"rank": rank, "done": done, "total": len(tasks), "generated_tokens": generated,
+                              "oov_tokens": out_of_range, "oov_dropped": dropped_total}), flush=True)
 
 
 # ----------------------------------------------------------------------------- orchestration
@@ -329,9 +393,9 @@ def provenance(args, problems, hashes, verifier, prompter):
             versions[package] = None
     if versions["vllm"] is None:
         raise RuntimeError("vLLM is required; see the factory guide for the environment")
-    return {"protocol": PROTOCOL, "model": str(model), "model_sha256": model_hashes, "hybrid_thinking": args.hybrid_thinking,
-            "chat_template": prompter.chat, "data_files": hashes, "versions": versions,
-            "python": sys.version.split()[0], "sandbox": verifier.version(),
+    return {"protocol": PROTOCOL, "protocol_amendment": AMENDMENT, "model": str(model), "model_sha256": model_hashes,
+            "hybrid_thinking": args.hybrid_thinking, "chat_template": prompter.chat, "token_limit": prompter.limit,
+            "data_files": hashes, "versions": versions, "python": sys.version.split()[0], "sandbox": verifier.version(),
             "selection_sha256": hashlib.sha256(json.dumps([row["id"] for row in problems]).encode()).hexdigest()}
 
 
@@ -347,7 +411,8 @@ def collect(directory, progress, workers, total, deadline, gpus):
         progress.update("running", done, total, detail="amp_generating", workers=rows,
                         metrics={"active_gpus": len(gpus), "generated_tokens": tokens})
         if any(code not in (None, 0) for code in codes):
-            raise RuntimeError(f"worker exited with {codes}; inspect worker-<rank>.log")
+            raise RuntimeError(f"worker exit codes {codes} (None: still running, stopped after the failure); "
+                               "inspect worker-<rank>.log")
         if all(code == 0 for code in codes):
             return
         if monotonic() >= deadline:
@@ -368,7 +433,8 @@ def experiment(args, directory, progress, started):
     inputs = provenance(args, eligible, hashes, verifier, prompter)
     if args.phase == "p0a":
         smoke = load(progress_root() / args.smoke_run / SUMMARY)
-        same = {key: inputs[key] for key in ("model_sha256", "hybrid_thinking", "data_files", "versions", "sandbox")}
+        same = {key: inputs[key] for key in ("protocol_amendment", "model_sha256", "hybrid_thinking", "data_files",
+                                             "versions", "sandbox", "token_limit")}
         if smoke.get("phase") != "smoke" or smoke.get("verdict") != "PASS" or \
                 {key: smoke["provenance"].get(key) for key in same} != same or \
                 smoke["provenance"].get("repo_revision") != progress.commit:
@@ -378,7 +444,7 @@ def experiment(args, directory, progress, started):
     settings = {"gpus": len(gpus), "samples": SAMPLES[args.phase], "budgets": BUDGETS[args.phase],
                 "hybrid": args.hybrid_thinking, "max_model_len": MAX_MODEL_LEN[args.hybrid_thinking],
                 "gpu_memory": args.gpu_memory, "temperature": TEMPERATURE, "top_p": TOP_P, "seed": SEED,
-                "code_limits": CODE_LIMITS, "prompt_cap": PROMPT_CAP}
+                "code_limits": CODE_LIMITS, "prompt_cap": PROMPT_CAP, "token_limit": prompter.limit}
     atomic_json(directory / "inputs.json", {"provenance": inputs, "settings": settings, "probe": probe,
                                            "dropped": dropped, "prompt_cap_exclusions": len(chosen) - len(eligible)})
     atomic_json(directory / "plan.json", {"model": inputs["model"], "settings": settings, "problems": eligible})
@@ -399,7 +465,9 @@ def experiment(args, directory, progress, started):
     progress.update("running", len(rows), len(rows), detail="amp_analyze")
     result = analyze(rows)
     sandbox = [load(path)["sandbox"] for path in sorted(directory.glob("status-*.json"))]
-    result.update(provenance=inputs, settings=settings, sandbox_timing=sandbox,
+    token_range = {"limit": prompter.limit, "generated_outside": sum(row["oov_tokens"] for row in rows),
+                   "dropped_from_feedback": sum(row["oov_dropped"] for row in rows)}
+    result.update(provenance=inputs, settings=settings, sandbox_timing=sandbox, token_range=token_range,
                   prompt_cap_exclusions=len(chosen) - len(eligible))
     if args.phase == "smoke":
         code_ok = sum(finish.startswith("ok") for row in rows for finish in row["arms"]["code"]["finish"])
@@ -407,8 +475,10 @@ def experiment(args, directory, progress, started):
                        for arm in rows[0]["arms"])
         infra = max(arm["infra_rate"] or 0 for arm in result["arms"].values())
         result["p0a_gate_preview"] = result.pop("verdict")
-        result["verdict"] = "PASS" if answered and code_ok > 0 and infra <= 0.01 else "FAIL"
-        result["smoke_checks"] = {"every_arm_answered": answered, "executed_programs_ok": code_ok, "max_infra_rate": infra}
+        masked = token_range["generated_outside"] == 0
+        result["verdict"] = "PASS" if answered and code_ok > 0 and infra <= 0.01 and masked else "FAIL"
+        result["smoke_checks"] = {"every_arm_answered": answered, "executed_programs_ok": code_ok, "max_infra_rate": infra,
+                                  "generated_outside_tokenizer": token_range["generated_outside"]}
     return result
 
 

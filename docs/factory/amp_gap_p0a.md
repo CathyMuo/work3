@@ -3,10 +3,12 @@
 P0a 检验拟方法的根基：在有标准答案的数学训练题上，模型「多想后答得一致」的答案是否大多正确，按放大差距选出的题标签是否比 R-Zero 式选题更准。
 
 - 只做推理，不训练；四卡数据并行，每卡一个 vLLM 进程。
-- 主模型约 1–2 小时，副模型约 2–3 小时。
+- 主模型约 1.5–2.5 小时，副模型约 2–3 小时。
 - 门槛见[冻结协议](../../research/protocols/amp_gap_p0a.md)。
 
-本提交同时修复了反馈 #62 的沙箱超时：外层期限改为「启动预算 + 执行限额 + 兜底」。执行限额仍由 launcher 在命名空间建好后单独计时；启动预算在 `run_amp_gap.sh` 中默认 120 秒，可用 `WORK3_SANDBOX_STARTUP_SECONDS` 调整。P0a 每卡只开 2 路程序执行，四卡共 8 路，对应 #62 实测的并发水平。`feedback_pair` 已停止，不需要再跑。
+**反馈 #63 之后（协议修订 1）：** 所有臂改为只在分词器认识的 token id 内采样，`force` 臂接回 token 前另加过滤兜底。每张卡加载完模型后先自检 vLLM 是否真的执行了采样限制，worker 日志第一行会打印 `mask_selftest`。之后每批打印一次进度和越界计数。旧冒烟 `amp-gap-base-smoke-v1` 属于旧提交，不能再引用，请按第三节用 `-v2` 的运行名重跑冒烟和正式 P0a。限制采样会多花一点前端时间和内存（每卡多几 GB 主机内存），整体约慢 5–10 分钟。
+
+反馈 #62 的沙箱超时已在上一提交修复：外层期限改为「启动预算 + 执行限额 + 兜底」。执行限额仍由 launcher 在命名空间建好后单独计时；启动预算在 `run_amp_gap.sh` 中默认 120 秒，可用 `WORK3_SANDBOX_STARTUP_SECONDS` 调整。P0a 每卡只开 2 路程序执行，四卡共 8 路，对应 #62 实测的并发水平。`feedback_pair` 已停止，不需要再跑。
 
 ## 一、需要带入厂内的模型与数据
 
@@ -40,7 +42,7 @@ huggingface-cli download --repo-type dataset EleutherAI/hendrycks_math --local-d
 
 需要一个 Python 环境，满足以下条件：
 
-- `vllm >= 0.8.5`、`transformers >= 4.51.3`：Qwen3 的最低支持版本；
+- `vllm >= 0.8.5`、`transformers >= 4.51.0`：Qwen3 的最低支持版本（厂内 `rsi` 环境的 4.51.1 可用，无需升级）；
 - `pyarrow`、`torch`；
 - 系统自带的 `/usr/bin/python3`：沙箱用。
 
@@ -69,13 +71,13 @@ bash scripts/run_amp_gap.sh probe-sandbox
 # 2. 数据核对（CPU，几秒）：应看到约 7,500 道可用题、selected_p0a = 1000、五个等级各 200
 bash scripts/run_amp_gap.sh verify-data --data "$DATA"
 
-# 3. 主模型冒烟（约 10–15 分钟，主要是加载模型），verdict 应为 PASS
+# 3. 主模型冒烟（约 5–15 分钟，主要是加载模型），verdict 应为 PASS
 CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/run_amp_gap.sh smoke \
-  --id amp-gap-base-smoke-v1 --data "$DATA" --model "$BASE"
+  --id amp-gap-base-smoke-v2 --data "$DATA" --model "$BASE"
 
-# 4. 主模型正式 P0a（约 1–2 小时）
+# 4. 主模型正式 P0a（约 1.5–2.5 小时）
 CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/run_amp_gap.sh p0a \
-  --id amp-gap-base-p0a-v1 --data "$DATA" --model "$BASE" --smoke-run amp-gap-base-smoke-v1
+  --id amp-gap-base-p0a-v2 --data "$DATA" --model "$BASE" --smoke-run amp-gap-base-smoke-v2
 
 # 5. 副模型（带思考开关）冒烟与正式 P0a（约 2–3 小时）
 CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/run_amp_gap.sh smoke \
@@ -85,7 +87,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/run_amp_gap.sh p0a \
   --smoke-run amp-gap-hybrid-smoke-v1
 ```
 
-- 每个运行名只能用一次，重跑请换新名字，例如 `-v2`。
+- 每个运行名只能用一次，重跑请换新名字，例如 `-v3`。`-v1` 的主模型运行属于旧提交，保留原目录即可。
 - 看板会显示「放大差距 P0a」各阶段和分卡进度。
 - 主模型的结果决定去留。时间紧时，先跑完第 1–4 步并回传，第 5 步可以随后补跑。
 
@@ -95,6 +97,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/run_amp_gap.sh p0a \
 | --- | --- |
 | 显存不足 | 加 `--gpu-memory 0.75` |
 | 汇总里 `code` 臂的 `infra_rate` 超过 1%，或报 startup budget | 设 `export WORK3_SANDBOX_STARTUP_SECONDS=300` 后换新运行名重跑 |
+| worker 日志报 `vLLM ignored allowed_token_ids` | 说明该 vLLM 没有执行采样限制，停下回传日志，不要绕过 |
+| 报错信息里的退出码含 `None` | 表示该卡当时仍在正常运行，因其他卡失败被一并停止，看其他卡的日志 |
 | 不要做的事 | 不要修改预算、种子和题目数，不要跳过冒烟 |
 
 ## 四、回传
@@ -102,9 +106,10 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/run_amp_gap.sh p0a \
 每个运行目录在 `$WIKI_RSI_ROOT/<运行名>/` 下。
 
 - **完成时回传：**
-  - `wiki_rsi_amp_gap_summary.json`（含判定、各臂校准和放大差距）；
+  - `wiki_rsi_amp_gap_summary.json`（含判定、各臂校准、放大差距和 `token_range` 越界计数）；
   - `inputs.json`；
-  - `rank-*.jsonl`：只有答案键、token 数和结束原因，几 MB。
+  - `rank-*.jsonl`：只有答案键、token 数和结束原因，几 MB；
+  - `status-*.json` 和每个 `worker-*.log` 的前 5 行（含自检结果）。
 - **中断时回传：**
   - `incomplete.json`；
   - 每个 `worker-*.log` 的最后 100 行。

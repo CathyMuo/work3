@@ -3,8 +3,8 @@
   "project": "work3",
   "updated_at": "2026-11-26",
   "current_stage": "放大差距自博弈 · P0a 高低预算一致性校准",
-  "status": "可验证反馈组合（feedback_pair_v1）在方法层面停止：反馈 #62 的 prepare 因沙箱外层期限计入并发启动而中断，复核认为冻结小模型的反馈内容与重采样打平、四格选择上限低于门槛。工作三改为 RSI 方向的放大差距自博弈，先做纯推理 P0a；沙箱已改为启动与执行分开计时。尚无新方法结果。",
-  "next_action": "厂内按 docs/factory/amp_gap_p0a.md 带入 Qwen3-4B-Base、Qwen3-4B 与 Hendrycks MATH，依次运行 probe-sandbox、verify-data、smoke、p0a（主模型），再跑副模型。",
+  "status": "可验证反馈组合（feedback_pair_v1）在方法层面停止，工作三改为 RSI 方向的放大差距自博弈，先做纯推理 P0a。反馈 #63：主模型冒烟 PASS，正式 P0a 因 Qwen3 采到分词器范围外的保留 token id、force 臂接回提示被 vLLM 拒收而 INCOMPLETE；已按协议修订 1 限制采样范围并加兜底过滤。尚无新方法结果。",
+  "next_action": "厂内拉取修订 1 提交，暂停保活训练，按 docs/factory/amp_gap_p0a.md 重跑主模型冒烟 amp-gap-base-smoke-v2 与正式 P0a amp-gap-base-p0a-v2，再跑副模型。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
