@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "project": "work3",
-  "updated_at": "2026-11-26",
-  "current_stage": "选题复核 · 放大差距自博弈已停止",
-  "status": "放大差距自博弈 P0a 在 1cd4447（协议修订 2）下完整跑完，主模型 Qwen3-4B-Base 与副模型 Qwen3-4B 均判 NO-GO：G1 校准通过，G3 差距集占比最高 4.8%（门槛 10%），主模型高预算臂平均差距全为负。该方向停止。冻结备选「可保证完备性的智能体检索」经同日复核不启动：方法组合已有先例（arXiv 2506.05497、2611.15835），且 QAMPARI/QUEST 的瓶颈在检索器上限而非停止。另查的五个候选均有直接先例或上限过低。当前没有通过复核的方法候选。",
-  "next_action": "无待厂内执行的任务；保活训练照常。待用户确定方向后冻结新协议并发布指南。厂内保留四个 amp-gap 运行目录（含 rank-*.jsonl 与 texts-*.jsonl.gz）。",
+  "updated_at": "2026-11-27",
+  "current_stage": "方案 A 去留检验 · 答案先验（answer_prior_p0_v1）",
+  "status": "2026-11-27 用户在三版方案中选定「先做方案 A 的去留检验，12 月 4 日不过转方案 B」。方案 A 把模型的先验从检索里拆出来（只训练查询编码器）。已冻结 answer_prior_p0_v1：在 wiki-18 全量语料与 PopQA 上测 E5-base-v2 与 Qwen3-Embedding-0.6B 的三项读数——T1 答案替换敏感度（处理比对照多掉出前 5 至少 20 个点）、T2 按 Qwen3-4B 认知分层的配平召回（不知道层比自信记错层高至少 8 个点）、T3 同层交叉替换的事实更新偏好（知道层至少 0.65 且比不知道层高至少 15 个点）。某个有效检索器三项中至少两项达标判 GO。尚无读数。",
+  "next_action": "厂内带入 Qwen3-Embedding-0.6B 与 PopQA，暂停保活训练，按 docs/factory/answer_prior_p0.md 依次跑单元测试、verify、prepare、四卡冒烟 answer-prior-smoke-v1、四卡正式运行 answer-prior-run-v1，回传汇总。判定日 2026-12-04；NO-GO 转方案 B。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",

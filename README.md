@@ -1,6 +1,8 @@
 # Work 3
 
-**2026-11-26 放大差距自博弈 P0a 就绪，待厂内运行。** [厂内指南](docs/factory/amp_gap_p0a.md) · [冻结协议](research/protocols/amp_gap_p0a.md) · [研究计划](research/EXPERIMENT_PLAN.md)
+**2026-11-27 方案 A 答案先验去留检验就绪，待厂内运行（12-04 判定）。** [厂内指南](docs/factory/answer_prior_p0.md) · [冻结协议](research/protocols/answer_prior_p0.md) · [决策日志](research/DECISION_LOG.md)
+
+放大差距自博弈 P0a 已判 NO-GO 并停止。
 
 可验证反馈组合已在方法层面停止，记录见[决策日志](research/DECISION_LOG.md)。
 

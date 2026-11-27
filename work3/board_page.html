@@ -396,7 +396,8 @@ const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", prefligh
   feedback_pilot:"4. 动态分配与静态对照", feedback_confirm:"5. 独立自然题确认",
   continual_smoke:"四卡冒烟", continual_necessity:"C1 · 后续任务成功覆盖", continual_method:"C2 · 方法对照",
   decision_check:"B0 · 检查动作可重放性预检", budget_rlvr:"预算受限 RLVR · 同前缀两分支试点",
-  pair_repair:"可验证反馈组合 · 四格修复", amp_gap:"放大差距 P0a · 高低预算一致性校准"};
+  pair_repair:"可验证反馈组合 · 四格修复", amp_gap:"放大差距 P0a · 高低预算一致性校准",
+  answer_prior_prepare:"答案先验检验 · 扫描 wiki-18 与 PopQA", answer_prior:"答案先验检验 · 三项去留读数"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   scanning_title_catalog:"核对原 Wikipedia 语料的可见标题",
@@ -467,7 +468,14 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   pair_incomparable:"预算读数失配", pair_incomplete:"运行中断，查看分卡日志",
   amp_preflight:"沙箱预检、核对数据与模型", amp_generating:"四卡生成五组预算并执行程序",
   amp_analyze:"计算一致率、校准与放大差距", amp_pass:"冒烟通过", amp_fail:"冒烟未通过",
-  amp_go:"达到 P0a 冻结门槛", amp_no_go:"未达到 P0a 冻结门槛", amp_incomplete:"运行中断，查看 worker 日志"};
+  amp_go:"达到 P0a 冻结门槛", amp_no_go:"未达到 P0a 冻结门槛", amp_incomplete:"运行中断，查看 worker 日志",
+  answer_prior_scanning:"扫描语料：行偏移、BM25 倒排与主题页段落", answer_prior_ready:"语料准备完成",
+  answer_prior_fail:"未通过检查，查看汇总", answer_prior_preflight:"核对准备产物、模型与冒烟",
+  answer_prior_knownness:"四卡闭卷作答，划分知道 / 记错 / 不知道", answer_prior_encode_e5:"四卡编码语料并检索（E5）",
+  answer_prior_encode_qwen3:"四卡编码语料并检索（Qwen3-Embedding）", answer_prior_bm25:"等待 BM25 检索",
+  answer_prior_probes:"构造答案替换与事实更新段落", answer_prior_scoring:"fp32 重新打分改写段落",
+  answer_prior_analyze:"计算三项读数与判定", answer_prior_pass:"冒烟通过", answer_prior_go:"达到去留门槛",
+  answer_prior_no_go:"未达到去留门槛", answer_prior_incomplete:"运行中断，查看 worker 日志与 incomplete.json"};
 const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   "2wikimultihopqa":"2Wiki 候选 / 可回放", hotpotqa_added:"HotpotQA 缓存新增候选",
   "2wikimultihopqa_added":"2Wiki 缓存新增候选", valid_triplets:"三臂格式均有效",
@@ -502,16 +510,21 @@ function renderWiki(target, runs, title) {
       const budget = run.id.startsWith("budget-rlvr-");
       const pair = run.id.startsWith("pair-repair-");
       const amp = run.id.startsWith("amp-gap-");
+      const apPrep = run.id === "answer-prior-prepare";
+      const ap = run.id.startsWith("answer-prior-") && !apPrep;
       const rows = Object.entries(wikiPhases).filter(([key]) =>
         key.startsWith("feedback_") === feedback && key.startsWith("continual_") === continual &&
         (key === "decision_check") === decision && (key === "budget_rlvr") === budget &&
-        (key === "pair_repair") === pair && (key === "amp_gap") === amp)
+        (key === "pair_repair") === pair && (key === "amp_gap") === amp &&
+        (key === "answer_prior_prepare") === apPrep && (key === "answer_prior") === ap)
         .map(([key, label]) => {
         const row = run.phases[key] || {state:"pending", metrics:{}};
-        const gated = feedback || continual || decision || budget || pair || amp;
-        const status = (decision || budget || pair || amp) && row.state === "failed" ? "INCOMPLETE" :
-          (row.detail === "budget_rlvr_pass" || row.detail === "pair_pass" || row.detail === "amp_pass") ? "PASS" :
-          row.detail === "pair_ready" ? "READY" : row.detail === "pair_data_no_go" ? "DATA-NO-GO" :
+        const gated = feedback || continual || decision || budget || pair || amp || ap || apPrep;
+        const status = (decision || budget || pair || amp || ap || apPrep) && row.state === "failed" ? "INCOMPLETE" :
+          (row.detail === "budget_rlvr_pass" || row.detail === "pair_pass" || row.detail === "amp_pass" ||
+           row.detail === "answer_prior_pass") ? "PASS" :
+          (row.detail === "pair_ready" || row.detail === "answer_prior_ready") ? "READY" :
+          row.detail === "answer_prior_fail" ? "FAIL" : row.detail === "pair_data_no_go" ? "DATA-NO-GO" :
           row.detail === "pair_incomparable" ? "INCOMPARABLE" :
           gated && row.state === "blocked" ? "NO-GO" :
           gated && row.state === "done" ? "GO" : row.state === "blocked" ? "等待输入条件" :
