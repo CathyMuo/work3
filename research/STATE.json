@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "project": "work3",
-  "updated_at": "2026-11-27",
-  "current_stage": "方案 A 收束（答案先验去留检验 NO-GO）· 转方案 B，首个实验待确认",
-  "status": "答案先验去留检验 answer_prior_p0_v1 在 ae5817a（加厂内 split_contents 修复）下完整跑完，两个检索器三项读数均不达标，判 NO-GO：T1 掉出前 5 的差距仅 +1.2 至 +1.6 点（门槛 20），T2 自信记错层与不知道层召回持平（配平差距 +1.5 点，区间跨零），T3 知道层偏好 0.54–0.55（门槛 0.65）。答案先验在真实段落里很弱，且集中在模型知道的事实上，在模型自信记错处测不到额外损害。唯一强效应是错误答案侵入（+30 点，但 BM25 也有 +20 点，主体是语料共现）。方案 A 收束，按既定顺序转方案 B（用检索给论断发证）。",
-  "next_action": "待用户确认方案 B 首个实验：复用 Qwen3-4B 闭卷答案作带真值的论断、复用 wiki-18 E5 向量，比较补检索与统一加深检索在相同开销和错误率保证下的正确论断保留率（门槛 +10 点），并测判官误差。确认后冻结协议、实现并发布指南。厂内需回传 answer-prior-run-v1 汇总 JSON 全文并保留语料向量与运行目录；暂无 GPU 任务。",
+  "updated_at": "2026-11-28",
+  "current_stage": "方案 B 首个实验 · 补检索发证（claim_cert_b0_v1）",
+  "status": "方案 A 去留检验 NO-GO 后，用户 2026-11-28 确认转方案 B（用检索给论断发证）。已冻结 claim_cert_b0_v1：复用方案 A 的 Qwen3-4B 闭卷答案（14,221 题，真值由 PopQA 别名自动判定）和已存 wiki-18 E5 向量，Qwen3-4B 核验 8 种检索配置。在 FDR ≤ α 的认证阈值下，比较自适应两阶段检索与统一检索在相同读段开销下的正确论断保留率（GO：α=0.1 时增益 ≥ 10 点），并测判官误差（PIVOT：自判官校准使实际 FDR ≥ 1.5α 且误判集中在自信记错的论断上）。尚无读数。",
+  "next_action": "厂内暂停保活训练，按 docs/factory/claim_cert_b0.md 跑单元测试、四卡冒烟 claim-cert-smoke-v1、四卡正式运行 claim-cert-run-v1（批量已设到上限），回传汇总 JSON 与 claims.jsonl；若有 32B 判官可另跑带 --judge 的一组。同时补传 answer-prior-run-v1 的汇总 JSON。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",

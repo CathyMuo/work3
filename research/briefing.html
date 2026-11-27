@@ -1,5 +1,5 @@
 <section class="hero">
-  <div class="kicker">工作三 · ICML 2027 方法论文 · 方案 B（按既定顺序，首个实验待确认）</div>
+  <div class="kicker">工作三 · ICML 2027 方法论文 · 方案 B（首个实验已冻结，待厂内运行）</div>
   <h1>检索能不能替模型的论断"发证"，而不是一删了之？</h1>
   <p class="lead">带统计保证的事实性方法把长回答拆成论断，删掉拿不准的，保证留下的几乎全对。代价是目标定到 95% 时，输出几乎被删空。方案 B 改为对拿不准的论断按预算补检索再判，整套自适应流程一起校准，在同样的错误率保证下保住更多正确论断；并把判官自身的误判纳入校准。</p>
   <div class="tags"><span>检索增强生成</span><span>事实性</span><span>保形风险控制</span><span>判官误差</span></div>
@@ -41,21 +41,24 @@
   <p class="callout">风险在新意：按目前的写法，保证只是"对冻结的整条流程套用可交换性"的推论。要过 ICML 的线，至少还要一条开销最优或逐论断任意时刻有效的专门结论。</p>
 </section>
 <section class="sec">
-  <h2><i>3</i>首个实验（建议，待确认后冻结）</h2>
+  <h2><i>3</i>首个实验（claim_cert_b0_v1，2026-11-28 冻结）</h2>
   <ul class="ticks">
     <li><b>论断与真值：</b>复用方案 A 跑出的 Qwen3-4B 闭卷答案，14,221 题，每题 9 次生成；真值由 PopQA 别名自动判定，不依赖判官。</li>
     <li><b>检索：</b>复用厂内已编码的 wiki-18 E5 向量。</li>
     <li><b>对比：</b>统一取前 k 段（k = 3/5/10/20），对比"先读 3 段、拿不准的再读到 20 段"。两者平均读段数相同，在保留论断错误率 ≤ α 的保证下，比较正确论断保留率。门槛为多保留至少 10 个点。</li>
     <li><b>判官误差：</b>用判官标签代替真值校准，测实际错误率超出多少，并看误判是否集中在"自信记错"的论断上。</li>
+    <li><b>保证：</b>保留论断错误率 ≤ α 的概率至少 0.9（固定阈值网格、精确二项检验）；50 次划分取平均。</li>
+    <li><b>判定：</b>GO = α=0.1 时多保留 ≥ 10 点；PIVOT = 保留率不过但判官误差成立，主体改为判官校准；否则 NO-GO。</li>
   </ul>
+  <p class="note"><a href="https://github.com/CathyMuo/work3/blob/main/research/protocols/claim_cert_b0.md">冻结协议</a> · <a href="https://github.com/CathyMuo/work3/blob/main/docs/factory/claim_cert_b0.md">厂内指南</a></p>
 </section>
 <section class="sec">
   <h2><i>4</i>时间线（修订）</h2>
   <table class="tl">
     <tbody>
       <tr><td>11-27</td><td>方案 A 判 NO-GO，比原定 12-04 早一周</td></tr>
-      <tr><td>确认后 1 天</td><td>冻结方案 B 首个实验协议、实现、发布厂内指南</td></tr>
-      <tr><td>其后半天</td><td>厂内运行（复用已有答案与向量）</td></tr>
+      <tr><td>11-28</td><td>用户确认转方案 B；首个实验冻结、实现并发布</td></tr>
+      <tr><td>其后半天</td><td>厂内运行（复用已有答案与向量，冒烟 10–15 分钟，正式 30–45 分钟）</td></tr>
       <tr><td>12 月</td><td>主表：长回答事实性（带人工标注的数据集）、开销—保留曲线、判官误差校正；同时推导专门的理论结论</td></tr>
       <tr><td>01-15 / 01-23</td><td>ICML 2027 摘要 / 全文截止（北京时间 19:59）</td></tr>
     </tbody>

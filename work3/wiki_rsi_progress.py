@@ -23,7 +23,7 @@ PHASES = ("audit", "prepare", "preflight", "smoke", "replay", "w2a_prepare", "w2
           "switch_transfer_prepare", "switch_transfer", "w7_gap", "w7_reader", "w7_bridge",
           "feedback_lock", "feedback_prepare", "feedback_mechanism", "feedback_pilot", "feedback_confirm",
           "continual_smoke", "continual_necessity", "continual_method", "decision_check", "budget_rlvr", "pair_repair",
-          "amp_gap", "answer_prior_prepare", "answer_prior")
+          "amp_gap", "answer_prior_prepare", "answer_prior", "claim_cert")
 STATES = ("running", "done", "failed", "blocked", "stalled")
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "outputs" / "wiki_rsi"
@@ -240,9 +240,9 @@ def board_runs(root, now, limit=20, legacy_root=None):
                                         "seed_index", "arm_index", "eligible_games", "rollout_tokens", "long_branches",
                                         *FEEDBACK_METRICS}
                              and isinstance(value, (int, float))})
-                if phase.startswith("feedback_") or phase in ("pair_repair", "answer_prior"):
+                if phase.startswith("feedback_") or phase in ("pair_repair", "answer_prior", "claim_cert"):
                     phases[phase]["workers"] = board_workers(row.get("workers"))
-                if phase in ("answer_prior", "answer_prior_prepare"):
+                if phase in ("answer_prior", "answer_prior_prepare", "claim_cert"):
                     phases[phase]["stages"] = board_stages(row.get("stages"))
             runs.append(run_view(directory.name, data["updated_at"], phases))
         except (OSError, ValueError, KeyError, AttributeError, TypeError):

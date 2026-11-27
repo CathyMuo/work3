@@ -413,7 +413,8 @@ const wikiPhases = {audit:"W0 输入审计", prepare:"W1 历史重建", prefligh
   continual_smoke:"四卡冒烟", continual_necessity:"C1 · 后续任务成功覆盖", continual_method:"C2 · 方法对照",
   decision_check:"B0 · 检查动作可重放性预检", budget_rlvr:"预算受限 RLVR · 同前缀两分支试点",
   pair_repair:"可验证反馈组合 · 四格修复", amp_gap:"放大差距 P0a · 高低预算一致性校准",
-  answer_prior_prepare:"答案先验检验 · 扫描 wiki-18 与 PopQA", answer_prior:"答案先验检验 · 三项去留读数"};
+  answer_prior_prepare:"答案先验检验 · 扫描 wiki-18 与 PopQA", answer_prior:"答案先验检验 · 三项去留读数",
+  claim_cert:"方案 B · 补检索发证首个实验"};
 const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"核对模型文件",
   scanning_caches:"检查各轮缓存中的真实检索段落",
   scanning_title_catalog:"核对原 Wikipedia 语料的可见标题",
@@ -491,7 +492,12 @@ const wikiDetails = {checking_inputs:"核对原 P0 输入", hashing_checkpoint:"
   answer_prior_encode_qwen3:"四卡编码语料并检索（Qwen3-Embedding）", answer_prior_bm25:"等待 BM25 检索",
   answer_prior_probes:"构造答案替换与事实更新段落", answer_prior_scoring:"fp32 重新打分改写段落",
   answer_prior_analyze:"计算三项读数与判定", answer_prior_pass:"冒烟通过", answer_prior_go:"达到去留门槛",
-  answer_prior_no_go:"未达到去留门槛", answer_prior_incomplete:"运行中断，查看 worker 日志与 incomplete.json"};
+  answer_prior_no_go:"未达到去留门槛", answer_prior_incomplete:"运行中断，查看 worker 日志与 incomplete.json",
+  claim_cert_preflight:"核对方案 A 产物、已存向量与模型", claim_cert_search:"四卡检索：问题与问题+答案两种查询",
+  claim_cert_verify:"四卡核验：8 种检索配置", claim_cert_judge:"较强判官核验", claim_cert_analyze:"保留率、判官误差与判定",
+  claim_cert_pass:"冒烟通过", claim_cert_fail:"冒烟未通过", claim_cert_go:"达到首个实验门槛",
+  claim_cert_pivot:"保留率未达标，判官误差成立：转判官校准", claim_cert_no_go:"未达到门槛",
+  claim_cert_incomplete:"运行中断，查看 worker 日志与 incomplete.json"};
 const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   "2wikimultihopqa":"2Wiki 候选 / 可回放", hotpotqa_added:"HotpotQA 缓存新增候选",
   "2wikimultihopqa_added":"2Wiki 缓存新增候选", valid_triplets:"三臂格式均有效",
@@ -510,6 +516,10 @@ const AP_STAGES = {
   bm25: ["BM25 检索（CPU）", "题"], probes: ["读取段落，构造答案替换与事实更新", "段"],
   scoring: ["fp32 重新打分改写段落", "段"], analysis: ["三项读数与判定", ""],
   scan: ["扫描 wiki-18：行偏移、BM25 倒排、主语页段落", "块"], facts: ["定位每题的主语页事实段落", "题"]};
+const CC_STAGES = {
+  preflight: ["核对方案 A 产物、已存 E5 向量与模型散列", ""], search: ["E5 检索：问题与问题+答案两种查询（复用已存向量）", "分片"],
+  verify: ["Qwen3-4B 核验 8 种检索配置（四卡，最大批量）", "论断"], judge: ["较强判官核验（可选）", "论断"],
+  analysis: ["保形阈值、保留率对比、判官误差与判定", ""]};
 
 // Remaining time of each stage: measured rate once 1% is done, otherwise the prior scaled by how finished stages
 // compared with their priors. Overall: serial stages add up; a parallel stage only adds time if it outlasts the
@@ -556,7 +566,7 @@ function overallTimes(times, now) {
   return {elapsed, remaining, frac: elapsed + remaining > 0 ? elapsed / (elapsed + remaining) : 0};
 }
 
-function renderStages(row) {
+function renderStages(row, labels = AP_STAGES) {
   const now = Date.now() / 1000;
   const live = row.state === "running";
   const times = stageTimes(row.stages, now, live);
@@ -571,7 +581,7 @@ function renderStages(row) {
     (all.remaining ? "<span>预计完成 " + clock(now + all.remaining) + "</span>" : "") +
     "<em>剩余时间先按各阶段的先验估计，阶段开始报告处理量后改用实测速度</em></div>" + bar(all.frac) + "</div>";
   h += '<div class="apst">' + times.map(t => {
-    const [label, unit] = AP_STAGES[t.key] || [t.key, ""];
+    const [label, unit] = labels[t.key] || AP_STAGES[t.key] || [t.key, ""];
     const count = t.total ? t.done.toLocaleString() + " / " + t.total.toLocaleString() + (unit ? " " + unit : "") : "";
     const time = t.state === "pending" ? "预计 " + left(t.remaining) :
       t.state === "done" || t.state === "skipped" ? "用时 " + hms(t.elapsed) :
@@ -610,19 +620,21 @@ function renderWiki(target, runs, title) {
       const amp = run.id.startsWith("amp-gap-");
       const apPrep = run.id === "answer-prior-prepare";
       const ap = run.id.startsWith("answer-prior-") && !apPrep;
+      const cc = run.id.startsWith("claim-cert-");
       const rows = Object.entries(wikiPhases).filter(([key]) =>
         key.startsWith("feedback_") === feedback && key.startsWith("continual_") === continual &&
         (key === "decision_check") === decision && (key === "budget_rlvr") === budget &&
         (key === "pair_repair") === pair && (key === "amp_gap") === amp &&
-        (key === "answer_prior_prepare") === apPrep && (key === "answer_prior") === ap)
+        (key === "answer_prior_prepare") === apPrep && (key === "answer_prior") === ap && (key === "claim_cert") === cc)
         .map(([key, label]) => {
         const row = run.phases[key] || {state:"pending", metrics:{}};
-        const gated = feedback || continual || decision || budget || pair || amp || ap || apPrep;
-        const status = (decision || budget || pair || amp || ap || apPrep) && row.state === "failed" ? "INCOMPLETE" :
+        const gated = feedback || continual || decision || budget || pair || amp || ap || apPrep || cc;
+        const status = (decision || budget || pair || amp || ap || apPrep || cc) && row.state === "failed" ? "INCOMPLETE" :
           (row.detail === "budget_rlvr_pass" || row.detail === "pair_pass" || row.detail === "amp_pass" ||
-           row.detail === "answer_prior_pass") ? "PASS" :
+           row.detail === "answer_prior_pass" || row.detail === "claim_cert_pass") ? "PASS" :
+          row.detail === "claim_cert_pivot" ? "PIVOT" :
           (row.detail === "pair_ready" || row.detail === "answer_prior_ready") ? "READY" :
-          row.detail === "answer_prior_fail" ? "FAIL" : row.detail === "pair_data_no_go" ? "DATA-NO-GO" :
+          (row.detail === "answer_prior_fail" || row.detail === "claim_cert_fail") ? "FAIL" : row.detail === "pair_data_no_go" ? "DATA-NO-GO" :
           row.detail === "pair_incomparable" ? "INCOMPARABLE" :
           gated && row.state === "blocked" ? "NO-GO" :
           gated && row.state === "done" ? "GO" : row.state === "blocked" ? "等待输入条件" :
@@ -637,7 +649,7 @@ function renderWiki(target, runs, title) {
         const dataset = row.dataset ? " · " +
           (row.dataset === "hotpotqa" ? "HotpotQA" : "2WikiMultiHopQA") : "";
         const timeline = row.stages && row.stages.length ?
-          '<tr><td colspan="4">' + renderStages(row) + "</td></tr>" : "";
+          '<tr><td colspan="4">' + renderStages(row, key === "claim_cert" ? CC_STAGES : AP_STAGES) + "</td></tr>" : "";
         return "<tr><td>" + esc(label) + '</td><td class="' + esc(row.state) + '">' + esc(status) +
           "</td><td>" + (timeline ? row.done + " / " + row.total + " 阶段" : units + progress) + "</td><td>" +
           esc((wikiDetails[row.detail] || "") + dataset + age) +
