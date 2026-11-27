@@ -1,4 +1,82 @@
 <section class="hero">
+  <div class="kicker">工作三 · ICML 2027 方法论文 · 方案 A</div>
+  <h1>检索器会不会偏向模型已经相信的答案？</h1>
+  <p class="lead">稠密检索器和大模型学自同一批网页。如果检索器在编码问题时已经"想好了答案"，含这个答案的段落就会被排到前面。模型知道答案时这无伤大雅；模型不知道或记错时，检索恰恰在它最该帮忙的地方失灵，甚至把错误答案送回给模型。</p>
+  <div class="tags"><span>知识密集型检索</span><span>检索增强生成</span><span>稠密检索偏差</span><span>只训练查询编码器</span></div>
+</section>
+<section class="sec">
+  <h2>当前状态</h2>
+  <div id="brief-state"><p class="note">读取 research/STATE.json…</p></div>
+  <p class="note">下方"最近一次实验"显示厂内运行的分阶段进度、已用时间和预计剩余时间。</p>
+</section>
+<section class="sec">
+  <h2><i>1</i>研究问题</h2>
+  <p>给定一个问题，检索器应当按"段落是否回答了这个问题"打分，而不是按"段落里是否出现了某个答案"打分。我们要回答三个问题：</p>
+  <ul class="ticks">
+    <li><b>存在吗？</b>在真实语料、真实检索中，把段落里的答案换成另一个同类型实体，段落的排名会不会明显下降？</li>
+    <li><b>伤在哪？</b>模型自信记错或不知道答案的问题，检索召回是否更差？检索器是否偏向模型的错误答案？</li>
+    <li><b>能修吗？</b>只训练查询编码器、索引不动，能否让打分不再依赖答案是谁，同时不损害常规问题？</li>
+  </ul>
+  <p>前两个问题由本周的去留检验回答，第三个问题是方案 A 的方法。</p>
+</section>
+<section class="sec">
+  <h2><i>2</i>研究动机</h2>
+  <div class="cols eq">
+    <div>
+      <h3>偏差已被证实</h3>
+      <p>Search-by-Answer Bias（arXiv 2611.11396，2026-11-08）测了 8 个检索器：检索器自身认为更可能的答案，其段落得分更高，E5-large 达 91.5%，Qwen3-Embedding-8B 达 94.6%，模型越大越明显。</p>
+      <p class="note">该文只用模板句，"知道"按检索器自身的语言模型头定义；没有测自然段落和模型自信记错的情形，也没有给修复。</p>
+    </div>
+    <div>
+      <h3>损害可能正在要害上</h3>
+      <ul>
+        <li>模型不会的题，加检索后正确率只有 42.6%，会的题是 85.4%（arXiv 2510.11358）。</li>
+        <li>让模型先猜答案再检索：猜对时 nDCG@10 涨 4.0，猜错时掉 1.1（arXiv 2505.12694）。</li>
+        <li>PopQA 长尾问题上，基于大模型的检索器召回@10 为 55.0，不如 BM25 的 62.6（arXiv 2602.17366）。</li>
+      </ul>
+    </div>
+  </div>
+  <p class="callout">检索增强最有用的地方，恰恰是生成模型不知道答案的地方。如果检索器带着同样的先验，这部分收益就会被吃掉。这是方案 A 立题的理由，也是本周要先证实的事。</p>
+</section>
+<section class="sec">
+  <h2><i>3</i>方法设想（检验通过后实施）</h2>
+  <div class="stepper">
+    <div class="st"><b>反事实不变性</b><span>把正例段落里的答案换成同类型的其他实体，要求换前换后得分相同；"只提到所信答案、关系不对"的段落作难负例。</span></div>
+    <div class="st"><b>只训练查询侧</b><span>偏差来自查询表示里混进的答案先验，所以索引不动，2,100 万段的向量直接复用，迭代快、部署不用重建索引。</span></div>
+    <div class="st"><b>按置信度合并</b><span>查询表示拆成关系部分和先验部分；模型有把握时保留先验，没把握时只用关系部分，避免常规题掉点。</span></div>
+    <div class="st"><b>免训练对照</b><span>把预测答案的方向从查询表示里投影掉，作为最简单的基线。</span></div>
+  </div>
+</section>
+<section class="sec">
+  <h2><i>4</i>本周去留检验（answer_prior_p0_v1）</h2>
+  <p>wiki-18 全量语料（21,015,324 段）、PopQA 14,267 题；检索器 E5-base-v2 与 Qwen3-Embedding-0.6B；Qwen3-4B 闭卷作答 9 次（1 次贪心、8 次采样），把题分成"知道 / 自信记错 / 不知道"。</p>
+  <table class="num">
+    <thead><tr><th>读数</th><th>做法</th><th>达标</th></tr></thead>
+    <tbody>
+      <tr><td>T1 换答案后排名掉多少</td><td>前 5 名里的主语页段落，答案换成同关系冷门实体；对照为换掉同形态的非答案片段</td><td>掉出前 5 比对照多 ≥ 20 个点</td></tr>
+      <tr><td>T2 分层召回</td><td>答案召回@10，按关系与页面热度配平</td><td>"不知道"比"自信记错"高 ≥ 8 个点</td></tr>
+      <tr><td>T3 事实更新</td><td>同关系、同一层内两题互换答案，看是否偏向原段落</td><td>"知道"层 ≥ 0.65，且比"不知道"层高 ≥ 15 个点</td></tr>
+    </tbody>
+  </table>
+  <p>某个检索器三项中至少两项达标判 <b>GO</b>，继续方案 A；否则 <b>NO-GO</b>，转方案 B（用检索给论断发证）。另记 BM25 与混合检索，以及"错误答案闯入""错误答案吸引"两项次要读数，直接看模型记错时检索器是否偏向错误答案。</p>
+  <p class="note"><a href="https://github.com/CathyMuo/work3/blob/main/research/protocols/answer_prior_p0.md">冻结协议</a> · <a href="https://github.com/CathyMuo/work3/blob/main/docs/factory/answer_prior_p0.md">厂内指南</a></p>
+</section>
+<section class="sec">
+  <h2><i>5</i>时间线</h2>
+  <table class="tl">
+    <tbody>
+      <tr><td>11-28 至 12-03</td><td>厂内运行去留检验：语料准备 → 冒烟 → 正式运行（约 2–3 小时）</td></tr>
+      <tr><td>12-04</td><td>判定：继续方案 A，或转方案 B</td></tr>
+      <tr><td>12-05 至 12-17</td><td>数据管线、查询侧不变性训练、诊断集与鲁棒性初表</td></tr>
+      <tr><td>12-18 至 01-03</td><td>主表、对照、端到端与搜索智能体实验、消融</td></tr>
+      <tr><td>01-04 至 01-12</td><td>分布变化下的界、分析、写作</td></tr>
+      <tr><td>01-15 / 01-23</td><td>ICML 2027 摘要 / 全文截止（北京时间 19:59）</td></tr>
+    </tbody>
+  </table>
+</section>
+<details class="sec">
+<summary>历史研究说明（11-27 之前的方向，均已收束）</summary>
+<section class="hero">
   <div class="kicker">工作三 · ICML 2027 方法论文</div>
   <h1>预算受限强化学习试点已收束</h1>
   <p class="lead">四卡完成 2,048 条。453 条轨迹在短答和前缀都没有可核验正确答案时，由长续写得到正确结果。在匹配采样成本下，直接采较少的自然全长轨迹得到最低奖励估计误差。</p>
@@ -210,4 +288,6 @@
     </div>
   </div>
 </section>
+</details>
+
 </details>

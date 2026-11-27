@@ -29,6 +29,7 @@ KNOWN_SAMPLES, KNOWN_TEMPERATURE, KNOWN_TOP_P, KNOWN_MAX_TOKENS = 8, 0.7, 0.95, 
 KNOWN_PROMPT = ("Answer the question with only the answer itself (a name, place, title or short term). "
                 "Do not explain.\n\nQuestion: {question}")
 SEED = 20261127
+KNOWN_CHUNK = 512
 
 
 def load(path):
@@ -121,9 +122,10 @@ class Encoder:
             self.fallback_model = copy.deepcopy(self.model).float().eval()
         return self.fallback_model
 
-    def encode_ids(self, ids, budget):
+    def encode_ids(self, ids, budget, progress=None):
         torch = self.torch
         output = torch.empty((len(ids), self.dim), dtype=torch.float32, device=self.device)
+        encoded = 0
         with torch.inference_mode():
             for batch in self.batches(ids, budget):
                 vectors = self.forward(self.model, [ids[index] for index in batch])
@@ -133,10 +135,13 @@ class Encoder:
                     vectors[bad] = self.forward(self.fallback(), [ids[index] for index in rows])
                     self.fallbacks += len(rows)
                 output[torch.tensor(batch, device=self.device)] = vectors
+                encoded += len(batch)
+                if progress is not None:
+                    progress(encoded)
         return output
 
-    def encode(self, texts, query=False, budget=65536):
-        return self.encode_ids(self.ids(texts, query), budget)
+    def encode(self, texts, query=False, budget=65536, progress=None):
+        return self.encode_ids(self.ids(texts, query), budget, progress)
 
 
 # ----------------------------------------------------------------------------- corpus encoding and exact search
@@ -250,9 +255,19 @@ def score_worker(args):
     encoder = Encoder(kind, plan["model"], dtype="float32", attention=plan["attention"], max_tokens=max_tokens)
     items = load(plan["items"])
     status = Path(plan["directory"]) / f"status-score-{retriever}.json"
-    atomic_json(status, {"retriever": retriever, "stage": "encoding", "updated_at": int(time.time())})
-    queries = encoder.encode(items["queries"], query=True, budget=32768)
-    passages = encoder.encode(items["passages"], query=False, budget=32768)
+    total = len(items["queries"]) + len(items["passages"])
+    last = [0.0]
+
+    def report(done, force=False):
+        if force or time.time() - last[0] >= 5:
+            last[0] = time.time()
+            atomic_json(status, {"rank": args.rank, "retriever": retriever, "stage": "encoding", "done": int(done),
+                                 "total": total, "updated_at": int(time.time())})
+
+    report(0, force=True)
+    queries = encoder.encode(items["queries"], query=True, budget=32768, progress=report)
+    offset = len(items["queries"])
+    passages = encoder.encode(items["passages"], query=False, budget=32768, progress=lambda done: report(offset + done))
     import torch
 
     pairs = torch.as_tensor(np.asarray(items["pairs"], dtype=np.int64).reshape(-1, 2), device=queries.device)
@@ -265,8 +280,9 @@ def score_worker(args):
         stored /= np.linalg.norm(stored, axis=1, keepdims=True)
         cosine = (stored * fresh).sum(axis=1)
         parity = {"n": int(len(cosine)), "mean_cosine": float(cosine.mean()), "min_cosine": float(cosine.min())}
-    atomic_json(status, {"retriever": retriever, "stage": "done", "pairs": int(len(pairs)), "parity": parity,
-                         "fallbacks": encoder.fallbacks, "updated_at": int(time.time())})
+    atomic_json(status, {"rank": args.rank, "retriever": retriever, "stage": "done", "done": total, "total": total,
+                         "pairs": int(len(pairs)), "parity": parity, "fallbacks": encoder.fallbacks,
+                         "updated_at": int(time.time())})
 
 
 # ----------------------------------------------------------------------------- closed-book knownness (vLLM)
@@ -292,22 +308,28 @@ def known_worker(args):
     engine = LLM(model=plan["model"], tokenizer=plan["model"], dtype="bfloat16", max_model_len=1024,
                  gpu_memory_utilization=plan["gpu_memory"], seed=SEED + rank, enable_prefix_caching=True,
                  generation_config="vllm")
-    prompts, params = [], []
-    for row in rows:
-        ids = prompt(row["question"])
-        prompts += [{"prompt_token_ids": ids}] * 2
-        # no newline stop: a leading newline would end the answer empty; clean_answer keeps the first non-empty line
-        params += [SamplingParams(n=1, temperature=0.0, max_tokens=KNOWN_MAX_TOKENS, stop_token_ids=stops,
-                                  skip_special_tokens=True),
-                   SamplingParams(n=KNOWN_SAMPLES, temperature=KNOWN_TEMPERATURE, top_p=KNOWN_TOP_P,
-                                  max_tokens=KNOWN_MAX_TOKENS, stop_token_ids=stops, skip_special_tokens=True,
-                                  seed=seed_for("known", row["qid"]))]
-    outputs = engine.generate(prompts, sampling_params=params, use_tqdm=False)
+    status = Path(plan["directory"]) / f"status-known-{rank}.json"
+    atomic_json(status, {"rank": rank, "done": 0, "total": len(rows), "updated_at": int(time.time())})
     with (Path(plan["directory"]) / f"known-{rank}.jsonl").open("x", encoding="utf-8") as stream:
-        for index, row in enumerate(rows):
-            greedy, sampled = outputs[2 * index], outputs[2 * index + 1]
-            stream.write(json.dumps({"qid": row["qid"], "greedy": greedy.outputs[0].text,
-                                     "samples": [choice.text for choice in sampled.outputs],
-                                     "prompt_tokens": len(greedy.prompt_token_ids)}, ensure_ascii=False) + "\n")
-    atomic_json(Path(plan["directory"]) / f"status-known-{rank}.json",
-                {"rank": rank, "done": len(rows), "total": len(rows), "updated_at": int(time.time())})
+        # chunks of KNOWN_CHUNK questions (9 sequences each) keep vLLM batches full and give the board progress
+        for start in range(0, len(rows), KNOWN_CHUNK):
+            chunk = rows[start:start + KNOWN_CHUNK]
+            prompts, params = [], []
+            for row in chunk:
+                ids = prompt(row["question"])
+                prompts += [{"prompt_token_ids": ids}] * 2
+                # no newline stop: a leading newline would end the answer empty; clean_answer keeps the first line
+                params += [SamplingParams(n=1, temperature=0.0, max_tokens=KNOWN_MAX_TOKENS, stop_token_ids=stops,
+                                          skip_special_tokens=True),
+                           SamplingParams(n=KNOWN_SAMPLES, temperature=KNOWN_TEMPERATURE, top_p=KNOWN_TOP_P,
+                                          max_tokens=KNOWN_MAX_TOKENS, stop_token_ids=stops, skip_special_tokens=True,
+                                          seed=seed_for("known", row["qid"]))]
+            outputs = engine.generate(prompts, sampling_params=params, use_tqdm=False)
+            for index, row in enumerate(chunk):
+                greedy, sampled = outputs[2 * index], outputs[2 * index + 1]
+                stream.write(json.dumps({"qid": row["qid"], "greedy": greedy.outputs[0].text,
+                                         "samples": [choice.text for choice in sampled.outputs],
+                                         "prompt_tokens": len(greedy.prompt_token_ids)}, ensure_ascii=False) + "\n")
+            stream.flush()
+            atomic_json(status, {"rank": rank, "done": start + len(chunk), "total": len(rows),
+                                 "updated_at": int(time.time())})

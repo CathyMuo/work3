@@ -141,11 +141,21 @@ details { border-top:1px solid var(--line); padding:8px 0 2px; margin-top:10px; 
 .brief .st small { color:var(--mute); font-size:12px; line-height:1.6; }
 .brief table.tl td:first-child { white-space:nowrap; color:var(--mute); width:120px; }
 @media (max-width: 760px) { .brief .cols, .brief .cols.eq, .brief .stepper { grid-template-columns:1fr; } .brief .hero h1 { font-size:21px; } main { padding:14px; } }
+/* stage timeline (answer-prior runs) */
+.apov { margin:4px 0 12px; } .apovt { display:flex; gap:6px 14px; flex-wrap:wrap; align-items:baseline; margin-bottom:6px; font-size:13px; }
+.apovt b { font-size:16px; } .apovt em { font-style:normal; color:var(--mute); }
+.apst { display:flex; flex-direction:column; gap:8px; }
+.aps { display:grid; grid-template-columns:minmax(230px, 1.25fr) 2fr 52px minmax(210px, 1.25fr); gap:10px; align-items:center; font-size:12.5px; }
+.aps .bar > i { background:var(--run); } .aps.done .bar > i { background:var(--ok); } .aps.failed .bar > i { background:var(--bad); }
+.aps.pending .apl { color:var(--mute); } .aps.running .apl { color:var(--run); font-weight:600; } .aps.failed .apl { color:var(--bad); } .aps.done .apl { color:var(--ok); }
+.apl em { font-style:normal; font-size:11px; border:1px solid var(--line); border-radius:999px; padding:0 6px; margin-left:4px; color:var(--mute); }
+.apn { text-align:right; font-variant-numeric:tabular-nums; } .apt { line-height:1.45; font-variant-numeric:tabular-nums; }
+@media (max-width: 760px) { .aps { grid-template-columns:1fr; } .apn { text-align:left; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>Work 3 · Wikipedia 搜索智能体</h1>
+  <h1>Work 3 · 检索中的答案先验</h1>
   <nav><button id="t-live">训练运行</button> <button id="t-wiki">实验运行</button> <button id="t-cur">训练曲线</button> <button id="t-brief" class="on">研究说明</button> <button id="t-res">项目记录</button></nav>
   <span class="mute" id="upd"></span>
 </header>
@@ -356,15 +366,21 @@ async function tick() {
 }
 
 async function loadBriefing() {
+  // research/briefing.html carries the current question and motivation; STATE.json fills the status slot
   try {
-    const response = await fetch("/api/research", {cache: "no-store"});
-    if (!response.ok) throw new Error("研究数据返回 " + response.status);
-    const result = await response.json();
-    $("#brief-body").innerHTML =
-      "<div class=\"hero\"><h1>哪些检索失败值得用来训练？</h1>" +
-      "<p>用真实 Wikipedia 轨迹检验补充证据能否救回答案，再测修复经验是否能迁移到新页面。</p>" +
-      "<p><strong>当前阶段</strong> " + esc(result.state.current_stage) + "</p></div>" +
-      "<div class=\"card\">" + result.plan_html + "</div>";
+    const [page, research] = await Promise.all([
+      fetch("/api/briefing", {cache: "no-store"}).then(r => {
+        if (!r.ok) throw new Error("研究说明返回 " + r.status); return r.text(); }),
+      fetch("/api/research", {cache: "no-store"}).then(r => r.ok ? r.json() : {state: {}})]);
+    const st = research.state || {};
+    $("#brief-body").innerHTML = page;
+    const slot = $("#brief-state");
+    const status = "<p><strong>当前阶段</strong> " + esc(st.current_stage || "—") + "</p>" +
+      (st.status ? "<p>" + esc(st.status) + "</p>" : "") +
+      (st.next_action ? '<p class="note"><strong>下一步</strong> ' + esc(st.next_action) +
+       (st.updated_at ? " · 更新于 " + esc(st.updated_at) : "") + "</p>" : "");
+    if (slot) slot.innerHTML = status;
+    else $("#brief-body").insertAdjacentHTML("afterbegin", '<section class="sec">' + status + "</section>");
   } catch (error) {
     $("#brief-body").textContent = "研究说明读取失败：" + error.message;
   }
@@ -487,6 +503,88 @@ const wikiMetrics = {hotpotqa:"HotpotQA 候选 / 可回放",
   active_gpus:"活动 GPU", seed_index:"种子序号", arm_index:"当轮对照序号", eligible_games:"合格状态",
   rollout_tokens:"已计费采样 token", long_branches:"完成的长短对照"};
 
+// ------------------------------------------------------------------ stage timeline with elapsed / remaining time
+const AP_STAGES = {
+  preflight: ["核对准备产物、模型散列与冒烟", ""], knownness: ["闭卷作答与认知分层（Qwen3-4B · 四卡）", "题"],
+  encode_e5: ["E5 编码全量语料并检索（四卡）", "段"], encode_qwen3: ["Qwen3-Embedding 编码全量语料并检索（四卡）", "段"],
+  bm25: ["BM25 检索（CPU）", "题"], probes: ["读取段落，构造答案替换与事实更新", "段"],
+  scoring: ["fp32 重新打分改写段落", "段"], analysis: ["三项读数与判定", ""],
+  scan: ["扫描 wiki-18：行偏移、BM25 倒排、主语页段落", "块"], facts: ["定位每题的主语页事实段落", "题"]};
+
+// Remaining time of each stage: measured rate once 1% is done, otherwise the prior scaled by how finished stages
+// compared with their priors. Overall: serial stages add up; a parallel stage only adds time if it outlasts the
+// serial stages before the stage that waits for it.
+function stageTimes(stages, now, live) {
+  let actual = 0, prior = 0;
+  for (const s of stages) if (s.state === "done" && s.started_at && s.finished_at && s.expected) {
+    actual += s.finished_at - s.started_at; prior += s.expected; }
+  const scale = prior > 0 ? Math.min(3, Math.max(0.33, actual / prior)) : 1;
+  return stages.map(s => {
+    let elapsed = 0, remaining = null, frac = 0, basis = "";
+    if (s.state === "done" || s.state === "skipped") {
+      elapsed = Math.max(0, (s.finished_at || now) - (s.started_at || s.finished_at || now)); remaining = 0; frac = 1;
+    } else if (s.state === "running") {
+      elapsed = Math.max(0, now - (s.started_at || now));
+      const f = s.total > 0 ? Math.min(1, s.done / s.total) : 0;
+      if (f >= 0.01 && f < 1) { remaining = elapsed * (1 - f) / f; frac = f; basis = "按实测速度"; }
+      else if (f >= 1) { remaining = 30; frac = 0.99; basis = "收尾中"; }
+      else { remaining = Math.max(s.expected * scale - elapsed, 30); frac = elapsed / (elapsed + remaining); basis = "按先验估计"; }
+      if (!live) { remaining = null; basis = ""; }
+    } else if (s.state === "failed") {
+      elapsed = Math.max(0, (s.finished_at || now) - (s.started_at || now)); frac = s.total ? s.done / s.total : 0;
+    } else { remaining = s.expected * scale; basis = "按先验估计"; }
+    return {...s, elapsed, remaining, frac, basis};
+  });
+}
+
+function overallTimes(times, now) {
+  const starts = times.map(t => t.started_at).filter(Boolean);
+  const first = starts.length ? Math.min(...starts) : null;
+  const finished = times.every(t => t.state === "done" || t.state === "skipped");
+  const stopped = times.some(t => t.state === "failed");
+  const last = Math.max(0, ...times.map(t => t.finished_at || 0));
+  const elapsed = first == null ? 0 : (finished || stopped) ? Math.max(0, last - first) : Math.max(0, now - first);
+  if (finished) return {elapsed, remaining: 0, frac: 1};
+  if (stopped || times.some(t => t.remaining == null)) return {elapsed, remaining: null, frac: null, stopped};
+  let before = 0, after = 0, parallel = 0, joined = false;
+  for (const t of times) {
+    if (t.parallel) { parallel = Math.max(parallel, t.remaining); continue; }
+    if (t.join) joined = true;
+    if (joined) after += t.remaining; else before += t.remaining;
+  }
+  const remaining = Math.max(before, parallel) + after;
+  return {elapsed, remaining, frac: elapsed + remaining > 0 ? elapsed / (elapsed + remaining) : 0};
+}
+
+function renderStages(row) {
+  const now = Date.now() / 1000;
+  const live = row.state === "running";
+  const times = stageTimes(row.stages, now, live);
+  const all = overallTimes(times, now);
+  const bar = f => '<div class="bar big"><i style="width:' + (Math.max(0, Math.min(1, f || 0)) * 100).toFixed(1) + '%"></i></div>';
+  const left = r => r == null ? "—" : r < 1 ? "0 秒" : hms(r);
+  const state = all.frac === 1 ? "已完成" : all.stopped ? "已中断" : row.state === "stalled" ? "心跳中断" :
+    row.state === "running" ? "进行中" : "已停止";
+  let h = '<div class="apov"><div class="apovt"><b>总进度 ' + (all.frac == null ? "—" : pct(all.frac)) + "</b>" +
+    "<span>" + state + "</span><span>已用 " + hms(all.elapsed) + "</span>" +
+    (all.frac === 1 ? "" : "<span>预计剩余 " + left(all.remaining) + "</span>") +
+    (all.remaining ? "<span>预计完成 " + clock(now + all.remaining) + "</span>" : "") +
+    "<em>剩余时间先按各阶段的先验估计，阶段开始报告处理量后改用实测速度</em></div>" + bar(all.frac) + "</div>";
+  h += '<div class="apst">' + times.map(t => {
+    const [label, unit] = AP_STAGES[t.key] || [t.key, ""];
+    const count = t.total ? t.done.toLocaleString() + " / " + t.total.toLocaleString() + (unit ? " " + unit : "") : "";
+    const time = t.state === "pending" ? "预计 " + left(t.remaining) :
+      t.state === "done" || t.state === "skipped" ? "用时 " + hms(t.elapsed) :
+      t.state === "failed" ? "中断，已用 " + hms(t.elapsed) : "已用 " + hms(t.elapsed) + " · 剩余 " + left(t.remaining);
+    const sub = [count, t.note, t.state === "done" ? "" : t.basis].filter(Boolean).join(" · ");
+    return '<div class="aps ' + esc(t.state) + '"><span class="apl">' + (ICON[t.state] || "○") + " " + esc(label) +
+      (t.parallel ? "<em>与 GPU 阶段并行</em>" : "") + "</span>" + bar(t.frac) +
+      '<span class="apn">' + (t.frac == null ? "" : pct(t.frac)) + '</span><span class="apt">' + esc(time) +
+      (sub ? '<br><span class="mute">' + esc(sub) + "</span>" : "") + "</span></div>";
+  }).join("") + "</div>";
+  return h;
+}
+
 function renderWikiWorkers(workers = []) {
   return workers.map(worker => {
     const count = worker.total ? " " + worker.done + " / " + worker.total : "";
@@ -538,10 +636,13 @@ function renderWiki(target, runs, title) {
           " · " + hms(Math.max(0, Date.now() / 1000 - row.action_started_at)) : "";
         const dataset = row.dataset ? " · " +
           (row.dataset === "hotpotqa" ? "HotpotQA" : "2WikiMultiHopQA") : "";
+        const timeline = row.stages && row.stages.length ?
+          '<tr><td colspan="4">' + renderStages(row) + "</td></tr>" : "";
         return "<tr><td>" + esc(label) + '</td><td class="' + esc(row.state) + '">' + esc(status) +
-          "</td><td>" + units + progress + "</td><td>" + esc((wikiDetails[row.detail] || "") + dataset + age) +
+          "</td><td>" + (timeline ? row.done + " / " + row.total + " 阶段" : units + progress) + "</td><td>" +
+          esc((wikiDetails[row.detail] || "") + dataset + age) +
           (details ? '<div class="mute">' + details + "</div>" : "") +
-          renderWikiWorkers(row.workers) + "</td></tr>";
+          renderWikiWorkers(row.workers) + "</td></tr>" + timeline;
       }).join("");
       const open = opened.has(run.id) ? opened.get(run.id) : index === 0;
       const started = run.started_at ? clock(run.started_at) : "—";

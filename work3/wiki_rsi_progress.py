@@ -59,7 +59,7 @@ class Progress:
         self.data = (json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists()
                      else {"schema_version": 1, "phases": {}})
 
-    def update(self, state, done=0, total=0, *, detail="", metrics=None, dataset=None, workers=None):
+    def update(self, state, done=0, total=0, *, detail="", metrics=None, dataset=None, workers=None, stages=None):
         now = int(time.time())
         with self.lock:
             phases = self.data["phases"]
@@ -76,6 +76,9 @@ class Progress:
             }
             if workers is not None:
                 phases[self.phase]["workers"] = workers
+            # stage timeline (answer-prior runs): kept across updates that do not pass it
+            if stages is not None or "stages" in previous:
+                phases[self.phase]["stages"] = stages if stages is not None else previous["stages"]
             self.data["updated_at"] = now
             atomic_json(self.path, self.data)
 
@@ -172,6 +175,29 @@ def board_workers(rows):
     return result
 
 
+STAGE_STATES = {"pending", "running", "done", "failed", "skipped"}
+
+
+def board_stages(rows):
+    """Sanitised stage timeline: key, state, done/total, start/finish stamps, prior seconds, parallel/join flags."""
+    result = []
+    if not isinstance(rows, list):
+        return result
+    for row in rows[:16]:
+        if not isinstance(row, dict) or not isinstance(row.get("key"), str) or \
+                not re.fullmatch(r"[a-z0-9_]{1,32}", row["key"]) or row.get("state") not in STAGE_STATES:
+            continue
+        done, total, expected = row.get("done", 0), row.get("total", 0), row.get("expected", 0)
+        if type(done) is not int or type(total) is not int or type(expected) is not int or \
+                done < 0 or total < 0 or expected < 0 or (total and done > total):
+            continue
+        stamps = {key: row.get(key) if type(row.get(key)) is int else None for key in ("started_at", "finished_at")}
+        result.append({"key": row["key"], "state": row["state"], "done": done, "total": total, "expected": expected,
+                       "parallel": row.get("parallel") is True, "join": row.get("join") is True,
+                       "note": str(row.get("note", ""))[:80], **stamps})
+    return result
+
+
 def board_runs(root, now, limit=20, legacy_root=None):
     runs = []
     for directory in root.iterdir() if root.is_dir() else ():
@@ -216,6 +242,8 @@ def board_runs(root, now, limit=20, legacy_root=None):
                              and isinstance(value, (int, float))})
                 if phase.startswith("feedback_") or phase in ("pair_repair", "answer_prior"):
                     phases[phase]["workers"] = board_workers(row.get("workers"))
+                if phase in ("answer_prior", "answer_prior_prepare"):
+                    phases[phase]["stages"] = board_stages(row.get("stages"))
             runs.append(run_view(directory.name, data["updated_at"], phases))
         except (OSError, ValueError, KeyError, AttributeError, TypeError):
             continue

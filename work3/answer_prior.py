@@ -37,6 +37,17 @@ POOL = 20
 SMOKE_PER_PROP, SMOKE_PREFIX_ROWS = 10, 200000
 PARITY_N = 512
 LIMITS = {"smoke": 2 * 3600, "run": 10 * 3600}
+# (stage, prior seconds, runs in parallel, waits for the parallel stages) -- priors only seed the board's ETA until a
+# stage reports measured progress; they are not limits.
+STAGE_PLAN = {
+    "run": [("preflight", 120, False, False), ("knownness", 600, False, False), ("encode_e5", 1500, False, False),
+            ("encode_qwen3", 5400, False, False), ("bm25", 1200, True, False), ("probes", 600, False, True),
+            ("scoring", 600, False, False), ("analysis", 300, False, False)],
+    "smoke": [("preflight", 120, False, False), ("knownness", 240, False, False), ("encode_e5", 150, False, False),
+              ("encode_qwen3", 400, False, False), ("bm25", 900, True, False), ("probes", 120, False, True),
+              ("scoring", 120, False, False), ("analysis", 60, False, False)],
+    "prepare": [("scan", 900, False, False), ("facts", 120, False, False)],
+}
 
 
 def load(path):
@@ -72,6 +83,59 @@ def versions():
         except importlib.metadata.PackageNotFoundError:
             found[package] = None
     return found
+
+
+class Stages:
+    """Stage timeline written into progress.json; the board derives elapsed, remaining and overall ETA from it."""
+
+    def __init__(self, progress, plan):
+        self.progress, self.detail = progress, ""
+        self.rows = [{"key": key, "state": "pending", "done": 0, "total": 0, "started_at": None, "finished_at": None,
+                      "expected": expected, "parallel": parallel, "join": join, "note": ""}
+                     for key, expected, parallel, join in plan]
+
+    def get(self, key):
+        return next(row for row in self.rows if row["key"] == key)
+
+    def start(self, key, total=0, note=""):
+        row = self.get(key)
+        row.update(state="running", started_at=row["started_at"] or int(time()), total=int(total), note=note)
+        self.push()
+
+    def advance(self, key, done, total=None, note=None):
+        row = self.get(key)
+        if row["state"] == "pending":
+            row.update(state="running", started_at=int(time()))
+        if total is not None:
+            row["total"] = int(total)
+        row["done"] = int(min(done, row["total"]) if row["total"] else done)
+        if note is not None:
+            row["note"] = str(note)[:80]
+
+    def finish(self, key, state="done", note=None):
+        row = self.get(key)
+        now = int(time())
+        row.update(state=state, finished_at=now, started_at=row["started_at"] or now)
+        if state == "done" and row["total"]:
+            row["done"] = row["total"]
+        if note is not None:
+            row["note"] = str(note)[:80]
+        self.push()
+
+    def fail_running(self):
+        for row in self.rows:
+            if row["state"] == "running":
+                row.update(state="failed", finished_at=int(time()))
+
+    def snapshot(self):
+        return [dict(row) for row in self.rows]
+
+    def push(self, detail=None, workers=None, metrics=None):
+        if detail is not None:
+            self.detail = detail
+        finished = sum(row["state"] == "done" for row in self.rows)
+        self.progress.update("running", finished, len(self.rows), detail=self.detail, metrics=metrics or {},
+                             workers=workers, stages=self.snapshot())
 
 
 def visible_gpus(requested):
@@ -119,18 +183,26 @@ def prepare(args):
         raise FileExistsError(f"{directory / PREPARE_SUMMARY} exists; prepare runs once per corpus")
     directory.mkdir(parents=True, exist_ok=True)
     progress = Progress(directory, PREPARE_PHASE)
+    stages = Stages(progress, STAGE_PLAN["prepare"])
     started = monotonic()
+
+    def scanned(done, total, rows_seen):
+        stages.advance("scan", done, total, note=f"{rows_seen:,} 行")
+        stages.push(metrics={"corpus_rows": rows_seen})
+
     with progress.heartbeat():
         try:
-            progress.update("running", detail="answer_prior_scanning")
+            stages.start("scan")
+            stages.push(detail="answer_prior_scanning")
             rows, files, dropped = load_popqa(args.popqa)
             vocabulary = sorted({word for row in rows for word in bm25_terms(row["question"])})
             titles = {title_key(row["s_wiki_title"]) for row in rows}
-            corpus = scan_corpus(args.corpus, vocabulary, titles, directory, args.processes or min(32, os.cpu_count() or 1),
-                                 lambda done, total, scanned: progress.update(
-                                     "running", done, total, detail="answer_prior_scanning",
-                                     metrics={"corpus_rows": scanned}))
+            corpus = scan_corpus(args.corpus, vocabulary, titles, directory,
+                                 args.processes or min(32, os.cpu_count() or 1), scanned)
+            stages.finish("scan", note=f"{corpus['rows']:,} 行")
+            stages.start("facts", total=len(rows))
             facts, subject_found = fact_passages(rows, directory / "subject_docs.jsonl")
+            stages.finish("facts", note=f"{len(facts):,} 题有事实段落")
             atomic_json(directory / "questions.json", rows)
             atomic_json(directory / "vocabulary.json", vocabulary)
             atomic_json(directory / "facts.json", facts)
@@ -145,12 +217,14 @@ def prepare(args):
                        "wall_seconds": round(monotonic() - started, 1)}
             atomic_json(directory / PREPARE_SUMMARY, summary)
             progress.update("done" if summary["verdict"] == "READY" else "blocked", corpus["ranges"], corpus["ranges"],
-                            detail=f"answer_prior_{summary['verdict'].lower()}", metrics={"corpus_rows": corpus["rows"]})
+                            detail=f"answer_prior_{summary['verdict'].lower()}", metrics={"corpus_rows": corpus["rows"]},
+                            stages=stages.snapshot())
             return summary
         except (Exception, KeyboardInterrupt) as exc:
             atomic_json(directory / "incomplete.json", {"verdict": "INCOMPLETE", "phase": "prepare",
                                                         "repo_revision": progress.commit, "error": str(exc)})
-            progress.update("failed", detail="answer_prior_incomplete")
+            stages.fail_running()
+            progress.update("failed", detail="answer_prior_incomplete", stages=stages.snapshot())
             raise
 
 
@@ -200,29 +274,47 @@ def stop_workers(workers):
             process.wait(timeout=10)
 
 
-def wait_all(workers, deadline, progress, detail, status_glob, directory, extra=()):
-    """Poll GPU workers (and optional background processes) until all exit; any failure stops everything."""
-    every = list(workers) + list(extra)
+def poll_background(context):
+    """Fold the CPU BM25 process's status into its (parallel) stage; failures surface through wait_all's exit codes."""
+    process, stages = context.get("bm25"), context["stages"]
+    if process is None or stages.get("bm25")["state"] in ("done", "failed"):
+        return
+    status = context["directory"] / "status-bm25.json"
+    if status.exists():
+        with suppress(OSError, ValueError):
+            state = load(status)
+            stages.advance("bm25", state.get("done", 0), state.get("total", 0),
+                           note="载入倒排" if state.get("stage") == "loading" else None)
+    if process.poll() == 0:
+        stages.finish("bm25")
+
+
+def wait_all(workers, context, detail, status_glob, stage):
+    """Poll GPU workers (and the background BM25 process) until the workers exit; any failure stops everything."""
+    directory, stages = context["directory"], context["stages"]
+    every = list(workers) + ([context["bm25"]] if context.get("bm25") is not None else [])
     while True:
         codes = [process.poll() for process in every]
         if any(code not in (None, 0) for code in codes):
             raise RuntimeError(f"{detail}: worker exit codes {codes} (None: still running, stopped after the failure);"
                                " inspect worker-*.log in the run directory")
-        if all(code == 0 for code in codes[:len(workers)]):
-            return
         states = []
         for path in sorted(directory.glob(status_glob)):
             with suppress(OSError, ValueError):
                 states.append(load(path))
-        done = sum(state.get("done", 0) for state in states)
-        total = sum(state.get("total", 0) for state in states)
-        progress.update("running", done, total, detail=detail,
-                        workers=[{"name": f"rank-{state.get('rank', index)}", "device": str(state.get("rank", index)),
-                                  "detail": detail, "done": state.get("done", 0), "total": state.get("total", 0),
-                                  "metrics": {}, "updated_at": state.get("updated_at", int(time()))}
-                                 for index, state in enumerate(states)],
-                        metrics={"active_gpus": len(workers)})
-        if monotonic() >= deadline:
+        if states and all("total" in state for state in states):
+            # until every worker reports, keep the planned total and only move `done`
+            stages.advance(stage, sum(state.get("done", 0) for state in states),
+                           sum(state["total"] for state in states) if len(states) == len(workers) else None)
+        poll_background(context)
+        if all(code == 0 for code in codes[:len(workers)]):
+            return
+        stages.push(detail, workers=[{"name": f"rank-{state.get('rank', index)}", "device": str(state.get("rank", index)),
+                                      "detail": detail, "done": state.get("done", 0), "total": state.get("total", 0),
+                                      "metrics": {}, "updated_at": state.get("updated_at", int(time()))}
+                                     for index, state in enumerate(states)],
+                    metrics={"active_gpus": len(workers)})
+        if monotonic() >= context["deadline"]:
             raise TimeoutError(f"{detail}: wall-clock limit reached")
         sleep(5)
 
@@ -248,14 +340,20 @@ def bm25_worker(args):
     from work3.answer_prior_corpus import BM25
 
     plan = load(args.plan)
-    index = BM25(plan["prepare"], load(Path(plan["prepare"]) / "vocabulary.json"))
+    status = Path(plan["directory"]) / "status-bm25.json"
     questions = load(plan["queries"])
+    atomic_json(status, {"stage": "loading", "done": 0, "total": len(questions), "updated_at": int(time())})
+    index = BM25(plan["prepare"], load(Path(plan["prepare"]) / "vocabulary.json"))
     ids = np.full((len(questions), POOL * 5), -1, dtype=np.int64)
     scores = np.zeros((len(questions), POOL * 5), dtype=np.float32)
     for row, question in enumerate(questions):
         found, values = index.search(question, POOL * 5)
         ids[row, :len(found)], scores[row, :len(found)] = found, values
+        if row % 200 == 199:
+            atomic_json(status, {"stage": "searching", "done": row + 1, "total": len(questions),
+                                 "updated_at": int(time())})
     np.savez(Path(plan["directory"]) / "search-bm25.npz", ids=ids, scores=scores)
+    atomic_json(status, {"stage": "done", "done": len(questions), "total": len(questions), "updated_at": int(time())})
 
 
 # ----------------------------------------------------------------------------- experiment stages
@@ -277,10 +375,10 @@ def knownness(context, questions, alias_norms):
     atomic_json(plan, {"model": context["generator"], "questions": str(directory / "questions-known.json"),
                        "gpus": len(gpus), "gpu_memory": context["gpu_memory"], "directory": str(directory)})
     workers = []
+    context["stages"].start("knownness", total=len(questions))
     try:
         workers = [spawn("known", plan, rank, device, directory, False) for rank, device in enumerate(gpus)]
-        wait_all(workers, context["deadline"], context["progress"], "answer_prior_knownness", "status-known-*.json",
-                 directory, extra=context["background"])
+        wait_all(workers, context, "answer_prior_knownness", "status-known-*.json", "knownness")
     finally:
         stop_workers(workers)
     answers = {}
@@ -295,6 +393,9 @@ def knownness(context, questions, alias_norms):
     for row in questions:
         item = answers[row["qid"]]
         result[row["qid"]] = stratum(item["greedy"], item["samples"], alias_norms[row["qid"]])
+    counts = Counter(info["stratum"] for info in result.values())
+    context["stages"].finish("knownness", note=" / ".join(f"{label} {counts.get(label, 0)}" for label in
+                                                         ("known", "wrong", "unknown", "partial")))
     return result
 
 
@@ -326,10 +427,10 @@ def dense_retrieval(context, questions, name):
                                     "corpus_range_sha256": context["corpus_sha256"],
                                     "attention": context["attention"], "encoder_version": 1}})
     workers = []
+    context["stages"].start(f"encode_{name}", total=context["corpus_rows"] if docs is None else len(docs))
     try:
         workers = [spawn("encode", plan, rank, device, directory, True) for rank, device in enumerate(gpus)]
-        wait_all(workers, context["deadline"], context["progress"], f"answer_prior_encode_{name}",
-                 f"status-{name}-*.json", directory, extra=context["background"])
+        wait_all(workers, context, f"answer_prior_encode_{name}", f"status-{name}-*.json", f"encode_{name}")
     finally:
         stop_workers(workers)
     parts = [np.load(directory / f"search-{name}-{rank}.npz") for rank in range(len(gpus))]
@@ -340,6 +441,8 @@ def dense_retrieval(context, questions, name):
     merged_ids, merged_scores = np.take_along_axis(ids, order, 1), np.take_along_axis(scores, order, 1)
     np.savez(directory / f"search-{name}.npz", ids=merged_ids, scores=merged_scores)
     stats = [load(directory / f"encode-{name}-{rank}.json") for rank in range(len(gpus))]
+    reused = sum(item["reused"] for item in stats)
+    context["stages"].finish(f"encode_{name}", note=f"复用 {reused}/{len(stats)} 个已编码分片" if reused else "")
     return merged_ids, {"shards": stats, "norm_min": min(item["norm_min"] for item in stats),
                         "norm_max": max(item["norm_max"] for item in stats),
                         "fallbacks": sum(item["fallbacks"] for item in stats)}
@@ -433,6 +536,8 @@ def score_probes(context, probe, parity):
 
     directory, gpus = context["directory"], context["gpus"]
     workers, plans = [], {}
+    context["stages"].start("scoring", total=sum(len(probe[name]["queries"]) + len(probe[name]["passages"])
+                                                 for name in RETRIEVER_NAMES))
     try:
         for index, name in enumerate(RETRIEVER_NAMES):
             items = {key: probe[name][key] for key in ("queries", "passages", "pairs")}
@@ -447,10 +552,10 @@ def score_probes(context, probe, parity):
                                       "attention": context["attention"], "items": str(directory / f"items-{name}.json"),
                                       "directory": str(directory)})
             workers.append(spawn("score", plans[name], index, gpus[index % len(gpus)], directory, True))
-        wait_all(workers, context["deadline"], context["progress"], "answer_prior_scoring", "status-score-*.json",
-                 directory)
+        wait_all(workers, context, "answer_prior_scoring", "status-score-*.json", "scoring")
     finally:
         stop_workers(workers)
+    context["stages"].finish("scoring")
     scores = {name: np.load(directory / f"scores-{name}.npy") for name in RETRIEVER_NAMES}
     status = {name: load(directory / f"status-score-{name}.json") for name in RETRIEVER_NAMES}
     return scores, status
@@ -569,13 +674,15 @@ def analyse(context, questions, strata, search, probe, probe_meta, scores, score
             "pop_edges": edges, **decision}, records
 
 
-def experiment(args, directory, progress, started):
+def experiment(args, directory, stages, started):
     import numpy as np
 
     from work3.answer_prior_corpus import Corpus
 
     deadline = started + LIMITS[args.phase]
-    progress.update("running", detail="answer_prior_preflight")
+    progress = stages.progress
+    stages.start("preflight")
+    stages.push(detail="answer_prior_preflight")
     prepare_dir = progress_root() / PREPARE_ID
     prepared = load(prepare_dir / PREPARE_SUMMARY)
     if prepared.get("verdict") != "READY":
@@ -626,28 +733,33 @@ def experiment(args, directory, progress, started):
                "index_root": (args.index_root or progress_root() / "answer-prior-index") if docs is None
                else directory / "index", "docs": docs, "docs_flat": docs, "facts": facts,
                "replacement_pools": replacement_pool(all_questions), "e5_index": args.e5_index,
-               "all_questions": all_questions, "background": []}
+               "all_questions": all_questions, "stages": stages, "bm25": None}
     atomic_json(directory / "inputs.json", {"provenance": inputs, "phase": args.phase, "questions": len(questions),
                                            "gpus": gpus, "smoke_docs": None if docs is None else len(docs)})
     alias_norms = {row["qid"]: [norm_answer(alias) for alias in row["aliases"]] for row in questions}
     bm25_plan = directory / "plan-bm25.json"
     atomic_json(bm25_plan, {"prepare": str(prepare_dir), "queries": str(directory / "queries.json"),
                             "directory": str(directory)})
+    stages.finish("preflight", note=f"{len(questions):,} 题 · {len(gpus)} 卡")
     bm25 = spawn("bm25", bm25_plan, 0, "", directory, False)  # CPU only, overlaps the GPU stages
-    context["background"] = [bm25]
+    context["bm25"] = bm25
+    stages.start("bm25", total=len(questions))
     search, retrieval_meta = {}, {}
     try:
         strata = knownness(context, questions, alias_norms)
         atomic_json(directory / "knownness.json", strata)
         for name in RETRIEVER_NAMES:
             search[name], retrieval_meta[name] = dense_retrieval(context, questions, name)
-        progress.update("running", detail="answer_prior_bm25")
+        stages.push(detail="answer_prior_bm25", metrics={"active_gpus": 0})
         while bm25.poll() is None:
+            poll_background(context)
+            stages.push()
             if monotonic() >= deadline:
                 raise TimeoutError("bm25: wall-clock limit reached")
             sleep(5)
         if bm25.returncode != 0:
             raise RuntimeError("bm25 worker failed; inspect worker-bm25-0.log")
+        poll_background(context)
     finally:
         stop_workers([bm25])
     bm25_ids = np.load(directory / "search-bm25.npz")["ids"]
@@ -660,13 +772,25 @@ def experiment(args, directory, progress, started):
             ranking = rrf([[d for d in search[name][index] if d >= 0], [d for d in bm25_ids[index] if d >= 0]], POOL)
             fused[index, :len(ranking)] = ranking
         search[f"{name}+bm25"] = fused
-    progress.update("running", detail="answer_prior_probes")
     needed = {int(doc) for ids in search.values() for row in ids for doc in row[:POOL] if doc >= 0}
-    contents_of = corpus.many(needed)
+    stages.start("probes", total=len(needed), note="读取段落")
+    stages.push(detail="answer_prior_probes")
+
+    def read(done):
+        stages.advance("probes", done)
+        stages.push()
+
+    contents_of = corpus.many(needed, progress=read)
+    stages.advance("probes", len(needed), note="构造改写段落")
+    stages.push()
     probe, probe_meta = build_probes(context, questions, strata, search, contents_of)
     parity, parity_state = parity_sample(context, corpus.many)
+    stages.finish("probes", note=" / ".join(f"{name} T1 {len(probe[name]['t1'])} 题 · T3 {len(probe[name]['t3'])} 向"
+                                             for name in RETRIEVER_NAMES))
+    stages.push(detail="answer_prior_scoring")
     scores, score_status = score_probes(context, probe, parity)
-    progress.update("running", detail="answer_prior_analyze")
+    stages.start("analysis")
+    stages.push(detail="answer_prior_analyze", metrics={"active_gpus": 0})
     contents_tokens = {doc: token_string(text) for doc, text in contents_of.items()}
     result, records = analyse(context, questions, strata, search, probe, probe_meta, scores, score_status,
                               retrieval_meta, contents_tokens)
@@ -689,6 +813,7 @@ def experiment(args, directory, progress, started):
         }
         result["smoke_checks"] = checks
         result["verdict"] = "PASS" if all(checks.values()) else "FAIL"
+    stages.finish("analysis", note=result["verdict"])
     return result
 
 
@@ -700,21 +825,23 @@ def run(args):
     directory.parent.mkdir(parents=True, exist_ok=True)
     directory.mkdir()
     progress = Progress(directory, PHASE)
+    stages = Stages(progress, STAGE_PLAN[args.phase])
     signal.signal(signal.SIGTERM, stop)
     try:
         with progress.heartbeat():
-            result = experiment(args, directory, progress, started)
+            result = experiment(args, directory, stages, started)
             result.update(phase=args.phase, wall_seconds=round(monotonic() - started, 1))
             atomic_json(directory / SUMMARY, result)
             verdict = result["verdict"].lower().replace("-", "_")
-            progress.update("done" if verdict in ("pass", "go") else "blocked", 1, 1, detail=f"answer_prior_{verdict}",
-                            metrics={"active_gpus": 0})
+            progress.update("done" if verdict in ("pass", "go") else "blocked", len(stages.rows), len(stages.rows),
+                            detail=f"answer_prior_{verdict}", metrics={"active_gpus": 0}, stages=stages.snapshot())
             print(json.dumps({key: result.get(key) for key in ("phase", "verdict", "passing_tests", "valid_retrievers",
                                                                "wall_seconds")}, ensure_ascii=False, indent=2))
     except (Exception, KeyboardInterrupt) as exc:
         atomic_json(directory / "incomplete.json", {"verdict": "INCOMPLETE", "phase": args.phase,
                                                     "repo_revision": progress.commit, "error": str(exc)})
-        progress.update("failed", detail="answer_prior_incomplete")
+        stages.fail_running()
+        progress.update("failed", detail="answer_prior_incomplete", stages=stages.snapshot())
         raise
 
 

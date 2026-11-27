@@ -1,14 +1,26 @@
 # Work 3 研究计划
 
-更新于 2026-11-25。目标为 ICML 2027 方法论文。
+更新于 2026-11-27。目标为 ICML 2027 方法论文（摘要 1 月 15 日、全文 1 月 23 日，北京时间 19:59）。
 
 ## 当前方法与冻结计划
 
-可验证反馈组合首筛检验，学习一过一错两个真实反馈的交互能否改善独立算法题上的修复。CodeContests 39/39 训练分片已在厂内通过 `verify-source`（7,509,753,086 字节）。已移除 Bubblewrap 与 `mount(2)` 依赖，发布内置无 mount 沙箱 `work3-userns-chroot-v1`（非 root 外部 UID + 真实 `RLIMIT_NPROC=1` + 私有 PID/net/user/IPC/UTS 命名空间 + 内核 `seccomp-BPF` + 最小只读 chroot + PID 1 原子回收与 `killpg` 兜底）。厂内先运行 `probe-sandbox`（约 4 秒）验收沙箱，再依次运行 `prepare`、四卡 `smoke` 与四卡 `pilot`。修复模型冻结。正式首筛前要求训练与封存各 384 个合格失败，方法进入复验要求超过最强对照至少 5 个百分点并满足区间与成本门槛。 [冻结协议](protocols/feedback_pair.md) · [厂内指南](../docs/factory/feedback_pair.md)
+**方案 A：把模型的先验从检索里拆出来。** 稠密检索器偏向含"模型已经相信的答案"的段落（Search-by-Answer Bias，arXiv 2611.11396）。方法只训练查询编码器、索引不动，用反事实不变性使打分不依赖答案是谁，并按作答模型的置信度合并先验部分。
 
-预算受限 RLVR 同前缀试点已结束。四卡完成 2,048 条，453 条后段新正信号占 22.12%，期望采样 token 最大与最小比为 1.00793。冻结拟方法 RMSE 0.015848，高于最佳全长对照的 0.007912，正式 NO-GO。保留等待完整自然输出的收益证据与全长对照。 [冻结协议](protocols/budget_rlvr_paired_pilot.md) · [终态及历史运行指南](../docs/factory/budget_rlvr_paired_pilot.md)
+方法动工前先做去留检验 `answer_prior_p0_v1`：在 wiki-18 全量语料和 PopQA 14,267 题上，用 E5-base-v2 与 Qwen3-Embedding-0.6B 测三项读数，按 Qwen3-4B 闭卷作答分层。
+
+- T1 答案替换敏感度：掉出前 5 的比例比对照多 ≥ 20 个点。
+- T2 配平召回：不知道层比自信记错层高 ≥ 8 个点。
+- T3 同层交叉替换的事实更新：知道层偏好原段落 ≥ 0.65，且比不知道层高 ≥ 15 个点。
+
+某个有效检索器三项中至少两项达标即继续，否则转方案 B（用检索给论断发证）。判定日 2026-12-04。 [冻结协议](protocols/answer_prior_p0.md) · [厂内指南](../docs/factory/answer_prior_p0.md)
 
 ## 已归档候选
+
+放大差距自博弈 P0a 两个模型均 NO-GO（差距集占比最高 4.8%，门槛 10%），已停止。 [冻结协议](protocols/amp_gap_p0a.md)
+
+可验证反馈组合首筛已于 2026-11-26 在方法层面停止。原计划：检验学习一过一错两个真实反馈的交互能否改善独立算法题上的修复。CodeContests 39/39 训练分片已在厂内通过 `verify-source`（7,509,753,086 字节）。已移除 Bubblewrap 与 `mount(2)` 依赖，发布内置无 mount 沙箱 `work3-userns-chroot-v1`（非 root 外部 UID + 真实 `RLIMIT_NPROC=1` + 私有 PID/net/user/IPC/UTS 命名空间 + 内核 `seccomp-BPF` + 最小只读 chroot + PID 1 原子回收与 `killpg` 兜底）。厂内先运行 `probe-sandbox`（约 4 秒）验收沙箱，再依次运行 `prepare`、四卡 `smoke` 与四卡 `pilot`。修复模型冻结。正式首筛前要求训练与封存各 384 个合格失败，方法进入复验要求超过最强对照至少 5 个百分点并满足区间与成本门槛。 [冻结协议](protocols/feedback_pair.md) · [厂内指南](../docs/factory/feedback_pair.md)
+
+预算受限 RLVR 同前缀试点已结束。四卡完成 2,048 条，453 条后段新正信号占 22.12%，期望采样 token 最大与最小比为 1.00793。冻结拟方法 RMSE 0.015848，高于最佳全长对照的 0.007912，正式 NO-GO。保留等待完整自然输出的收益证据与全长对照。 [冻结协议](protocols/budget_rlvr_paired_pilot.md) · [终态及历史运行指南](../docs/factory/budget_rlvr_paired_pilot.md)
 
 方案 C 正式 C1 为 NO-GO。A 的 pass@1 提升 15.04 个百分点，B 的两组 pass@16 各下降 1.17 个百分点，未达到 5 个百分点门槛。C2 未启动。 [C1 与 C2 冻结协议](protocols/continual_rlvr.md)
 

@@ -160,10 +160,15 @@ class Corpus:
         start, end = int(self.offsets[doc]), int(self.offsets[doc + 1])
         return json.loads(self.map[start:end])["contents"]
 
-    def many(self, docs):
-        """Contents for many ids, read in file order."""
+    def many(self, docs, progress=None, every=20000):
+        """Contents for many ids, read in file order; progress(done) is called every `every` rows."""
         unique = sorted({int(doc) for doc in docs})
-        return {doc: self.get(doc) for doc in unique}
+        result = {}
+        for index, doc in enumerate(unique, 1):
+            result[doc] = self.get(doc)
+            if progress is not None and index % every == 0:
+                progress(index)
+        return result
 
     def close(self):
         self.map.close()

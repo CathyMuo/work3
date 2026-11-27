@@ -243,6 +243,45 @@ class Pipeline(unittest.TestCase):
         json.dumps(result)
 
 
+class StageTimeline(unittest.TestCase):
+    def test_stages_persist_and_reach_the_board(self):
+        import time
+
+        from work3.answer_prior import STAGE_PLAN, Stages
+        from work3.wiki_rsi_progress import Progress, board_runs
+
+        with tempfile.TemporaryDirectory() as folder:
+            run = Path(folder) / "answer-prior-smoke-v1"
+            run.mkdir()
+            progress = Progress(run, "answer_prior")
+            stages = Stages(progress, STAGE_PLAN["run"])
+            stages.start("preflight")
+            stages.finish("preflight", note="160 题")
+            stages.start("knownness", total=100)
+            stages.advance("knownness", 40)
+            stages.push(detail="answer_prior_knownness")
+            progress.update("running", 1, 8, detail="answer_prior_knownness")  # no stages passed: kept
+            row = board_runs(Path(folder), int(time.time()))[0]["phases"]["answer_prior"]
+            keys = [stage["key"] for stage in row["stages"]]
+            self.assertEqual(keys, [key for key, *_ in STAGE_PLAN["run"]])
+            known = row["stages"][1]
+            self.assertEqual((known["state"], known["done"], known["total"]), ("running", 40, 100))
+            self.assertEqual(row["stages"][0]["note"], "160 题")
+            self.assertTrue(row["stages"][4]["parallel"] and row["stages"][5]["join"])
+            stages.fail_running()
+            progress.update("failed", detail="answer_prior_incomplete", stages=stages.snapshot())
+            row = board_runs(Path(folder), int(time.time()))[0]["phases"]["answer_prior"]
+            self.assertEqual(row["stages"][1]["state"], "failed")
+
+    def test_board_rejects_malformed_stages(self):
+        from work3.wiki_rsi_progress import board_stages
+
+        rows = [{"key": "ok_stage", "state": "running", "done": 5, "total": 10, "expected": 60},
+                {"key": "Bad Key", "state": "running"}, {"key": "x", "state": "weird"},
+                {"key": "y", "state": "done", "done": 11, "total": 10}, "nonsense"]
+        self.assertEqual([row["key"] for row in board_stages(rows)], ["ok_stage"])
+
+
 @unittest.skipUnless(HAS_NUMPY, "numpy not installed")
 class CorpusAndBM25(unittest.TestCase):
     def test_scan_offsets_subjects_and_bm25(self):
