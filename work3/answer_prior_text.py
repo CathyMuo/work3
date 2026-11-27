@@ -87,12 +87,22 @@ def title_key(title):
     return SPACE.sub(" ", unicodedata.normalize("NFC", unquote(title or "").replace("_", " "))).casefold().strip()
 
 
+BARE_TITLE = re.compile(r"([^\n\"]{1,200})\n")
+
+
 def split_contents(contents):
-    """wiki-18 rows store '"Title"\\ntext'; returns (title or None, text)."""
+    """wiki-18 rows store 'Title\\ntext'; the title may or may not carry double quotes.
+
+    The factory corpus has 19,096,761 quoted and 1,918,563 bare titles (feedback #65); the first version read only
+    quoted ones. This is the factory's fix, merged verbatim so that answer-prior-run-v1 reproduces exactly."""
     if contents.startswith('"'):
         head, newline, text = contents.partition("\n")
         if newline:
             return head[1:-1] if head.endswith('"') and len(head) > 1 else head[1:], text
+        return None, contents
+    match = BARE_TITLE.match(contents)
+    if match:
+        return match.group(1), contents[match.end():]
     return None, contents
 
 

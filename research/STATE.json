@@ -2,15 +2,16 @@
   "schema_version": 1,
   "project": "work3",
   "updated_at": "2026-11-27",
-  "current_stage": "方案 A 去留检验 · 答案先验（answer_prior_p0_v1）",
-  "status": "2026-11-27 用户在三版方案中选定「先做方案 A 的去留检验，12 月 4 日不过转方案 B」。方案 A 把模型的先验从检索里拆出来（只训练查询编码器）。已冻结 answer_prior_p0_v1：在 wiki-18 全量语料与 PopQA 上测 E5-base-v2 与 Qwen3-Embedding-0.6B 的三项读数——T1 答案替换敏感度（处理比对照多掉出前 5 至少 20 个点）、T2 按 Qwen3-4B 认知分层的配平召回（不知道层比自信记错层高至少 8 个点）、T3 同层交叉替换的事实更新偏好（知道层至少 0.65 且比不知道层高至少 15 个点）。某个有效检索器三项中至少两项达标判 GO。尚无读数。",
-  "next_action": "厂内带入 Qwen3-Embedding-0.6B 与 PopQA，暂停保活训练，按 docs/factory/answer_prior_p0.md 依次跑单元测试、verify、prepare、四卡冒烟 answer-prior-smoke-v1、四卡正式运行 answer-prior-run-v1，回传汇总。判定日 2026-12-04；NO-GO 转方案 B。",
+  "current_stage": "方案 A 收束（答案先验去留检验 NO-GO）· 转方案 B，首个实验待确认",
+  "status": "答案先验去留检验 answer_prior_p0_v1 在 ae5817a（加厂内 split_contents 修复）下完整跑完，两个检索器三项读数均不达标，判 NO-GO：T1 掉出前 5 的差距仅 +1.2 至 +1.6 点（门槛 20），T2 自信记错层与不知道层召回持平（配平差距 +1.5 点，区间跨零），T3 知道层偏好 0.54–0.55（门槛 0.65）。答案先验在真实段落里很弱，且集中在模型知道的事实上，在模型自信记错处测不到额外损害。唯一强效应是错误答案侵入（+30 点，但 BM25 也有 +20 点，主体是语料共现）。方案 A 收束，按既定顺序转方案 B（用检索给论断发证）。",
+  "next_action": "待用户确认方案 B 首个实验：复用 Qwen3-4B 闭卷答案作带真值的论断、复用 wiki-18 E5 向量，比较补检索与统一加深检索在相同开销和错误率保证下的正确论断保留率（门槛 +10 点），并测判官误差。确认后冻结协议、实现并发布指南。厂内需回传 answer-prior-run-v1 汇总 JSON 全文并保留语料向量与运行目录；暂无 GPU 任务。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",
     "decide_by": "2026-12-15"
   },
   "experiment_results": [
+    {"id": "ANSWER_PRIOR_P0", "date": "2026-11-27", "release": "ae5817a", "protocol": "answer_prior_p0_v1", "factory_patch": "split_contents bare titles (merged verbatim)", "verdict": "NO-GO", "questions": 14221, "generator": {"model": "Qwen3-4B", "greedy_accuracy": 0.1475, "strata": {"known": 1850, "partial": 2976, "wrong": 2942, "unknown": 6453}}, "e5_parity_mean_cosine": 0.9999994, "T1_dropout_gap": {"e5": 0.016, "qwen3": 0.0118, "e5_known": 0.069, "e5_wrong": 0.011, "threshold": 0.2}, "T2_matched_gap_recall10": {"e5": 0.0153, "ci95": [-0.0218, 0.0519], "threshold": 0.08}, "T3_pref_known": {"e5": 0.5358, "qwen3": 0.5542, "threshold": 0.65}, "T3_gap_known_unknown": {"e5": 0.1183, "qwen3": 0.1337, "threshold": 0.15}, "intrusion_excess": {"e5": 0.3137, "qwen3": 0.2984, "bm25": 0.2036}, "seconds": {"smoke": 361, "run": 7903.6}, "note": "Numbers transcribed from factory feedback #65 (docx); summary JSON requested."},
     {
       "id": "AMP_GAP_P0A",
       "date": "2026-11-26",

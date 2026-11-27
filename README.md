@@ -1,6 +1,6 @@
 # Work 3
 
-**2026-11-27 方案 A 答案先验去留检验就绪，待厂内运行（12-04 判定）。** [厂内指南](docs/factory/answer_prior_p0.md) · [冻结协议](research/protocols/answer_prior_p0.md) · [决策日志](research/DECISION_LOG.md)
+**2026-11-27 方案 A 答案先验去留检验判 NO-GO，方案 A 收束；按既定顺序转方案 B（用检索给论断发证），首个实验待确认。** [决策日志](research/DECISION_LOG.md) · [方案 A 协议](research/protocols/answer_prior_p0.md)
 
 放大差距自博弈 P0a 已判 NO-GO 并停止。
 

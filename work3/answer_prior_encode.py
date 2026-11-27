@@ -19,7 +19,7 @@ QWEN_TASK = "Given a web search query, retrieve relevant passages that answer th
 RETRIEVERS = {
     # name: (kind, max tokens, corpus dtype, token budget per corpus batch)
     "e5": ("e5", 256, "float16", 262144),
-    "qwen3": ("qwen3", 512, "float16", 131072),
+    "qwen3": ("qwen3", 512, "float16", 262144),  # was 131072 in answer-prior-run-v1 (23 of 80 GB used; feedback #65)
 }
 TOPK = 100
 CHUNK = 32768

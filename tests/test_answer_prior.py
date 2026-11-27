@@ -24,6 +24,10 @@ class TextRules(unittest.TestCase):
     def test_contents_split_and_title_key(self):
         self.assertEqual(split_contents('"Ann Lee"\nAnn Lee was a painter.'), ("Ann Lee", "Ann Lee was a painter."))
         self.assertEqual(split_contents("no title line"), (None, "no title line"))
+        # bare (unquoted) titles: 9.13% of the factory corpus (feedback #65)
+        self.assertEqual(split_contents("Absalon\nAbsalon was a Danish archbishop."),
+                         ("Absalon", "Absalon was a Danish archbishop."))
+        self.assertEqual(split_contents('"Quoted"'), (None, '"Quoted"'))
         self.assertEqual(title_key("Henry_Feilden_(Conservative%20politician)"), "henry feilden (conservative politician)")
 
     def test_answer_rules(self):
@@ -307,7 +311,8 @@ class CorpusAndBM25(unittest.TestCase):
             ids, scores = index.search("river1 town2", 10)
             self.assertTrue(all(int(doc) % 3 == 1 and int(doc) % 5 == 2 for doc in ids[:5]))
             self.assertTrue(np.all(np.diff(scores) <= 0))
-            self.assertEqual(rrf([[1, 2, 3], [3, 2, 9]], 3)[:2], [2, 3])
+            # doc 3: 1/63 + 1/61 = 0.0322665 > doc 2: 2/62 = 0.0322581 (expected value corrected after feedback #65)
+            self.assertEqual(rrf([[1, 2, 3], [3, 2, 9]], 3)[:2], [3, 2])
 
     def test_flat_index_header(self):
         import numpy as np
