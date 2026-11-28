@@ -4,7 +4,7 @@
   "updated_at": "2026-11-28",
   "current_stage": "方案 B 首个实验 · 补检索发证（claim_cert_b0_v1）",
   "status": "方案 A 去留检验 NO-GO 后，用户 2026-11-28 确认转方案 B（用检索给论断发证）。已冻结 claim_cert_b0_v1：复用方案 A 的 Qwen3-4B 闭卷答案（14,221 题，真值由 PopQA 别名自动判定）和已存 wiki-18 E5 向量，Qwen3-4B 核验 8 种检索配置。在 FDR ≤ α 的认证阈值下，比较自适应两阶段检索与统一检索在相同读段开销下的正确论断保留率（GO：α=0.1 时增益 ≥ 10 点），并测判官误差（PIVOT：自判官校准使实际 FDR ≥ 1.5α 且误判集中在自信记错的论断上）。尚无读数。",
-  "next_action": "厂内暂停保活训练，按 docs/factory/claim_cert_b0.md 跑单元测试、四卡冒烟 claim-cert-smoke-v1、四卡正式运行 claim-cert-run-v1（批量已设到上限），回传汇总 JSON 与 claims.jsonl；若有 32B 判官可另跑带 --judge 的一组。同时补传 answer-prior-run-v1 的汇总 JSON。",
+  "next_action": "厂内暂停保活训练，按 docs/factory/claim_cert_b0.md（修订 1）跑单元测试、带外部判官 Qwen3-32B（--judge-tp 2）的四卡冒烟 claim-cert-smoke-j1 与正式运行 claim-cert-run-j1（批量已设到上限），回传汇总 JSON 与 claims.jsonl；同时补传 answer-prior-run-v1 的汇总 JSON。",
   "target_venue": {
     "primary": "ICML 2027",
     "alternative": "SIGIR 2027",

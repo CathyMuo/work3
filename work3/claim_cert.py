@@ -22,7 +22,7 @@ from work3.answer_prior import (PREPARE_ID, PREPARE_SUMMARY, Stages, model_input
                                 visible_gpus, wait_all)
 from work3.answer_prior_text import PROTOCOL as SOURCE_PROTOCOL
 from work3.answer_prior_text import digest
-from work3.claim_cert_stats import (ALPHAS, CONFIGS, JUDGE_CUT, PROTOCOL, SPLITS, aggregate, auc, decide,
+from work3.claim_cert_stats import (ALPHAS, AMENDMENT, CONFIGS, JUDGE_CUT, PROTOCOL, SPLITS, aggregate, auc, decide,
                                     judge_calibration, judge_errors, rounded, run_split)
 from work3.wiki_rsi_progress import REPO, Progress, atomic_json, progress_root
 
@@ -265,7 +265,8 @@ def experiment(args, directory, stages, started):
     if found["vllm"] is None or found["torch"] is None:
         raise RuntimeError(f"vllm and torch are required; found {found}")
     shards = stored_shards(args.index_root)
-    inputs = {"protocol": PROTOCOL, "repo_revision": progress.commit, "model_sha256": model_sha256, "models": models,
+    inputs = {"protocol": PROTOCOL, "protocol_amendment": AMENDMENT, "repo_revision": progress.commit,
+              "model_sha256": model_sha256, "models": models,
               "corpus_range_sha256": prepared["corpus"]["range_sha256"], "source_run": args.source_run,
               "source_generator_sha256": source_inputs["provenance"]["model_sha256"].get("generator"),
               "verifier_is_generator": model_sha256["verifier"] ==
@@ -276,7 +277,8 @@ def experiment(args, directory, stages, started):
               "index_shards": [shard["manifest"] for shard in shards]}
     if args.phase == "run":
         smoke = load(progress_root() / args.smoke_run / SUMMARY)
-        keys = ("protocol", "repo_revision", "model_sha256", "corpus_range_sha256", "source_run", "versions")
+        keys = ("protocol", "protocol_amendment", "repo_revision", "model_sha256", "corpus_range_sha256", "source_run",
+                "versions", "judge_tp")
         if smoke.get("phase") != "smoke" or smoke.get("verdict") != "PASS" or \
                 {key: smoke["provenance"].get(key) for key in keys} != {key: inputs[key] for key in keys}:
             raise ValueError("run requires a PASS smoke from this commit with the same models, corpus and source run")
@@ -311,7 +313,13 @@ def experiment(args, directory, stages, started):
     }
     records, result = analysis(context, claims, verified, judged, args.phase)
     validity["verifier_auc"] = (result["verifier"]["q20"]["auc"] or 0.0) >= AUC_FLOOR
-    decision = decide(result["g1"], result["self_judge"], validity)
+    # amendment 1: the PIVOT gate uses the external judge when it ran and its answers parsed, else the self-judge
+    judge_parsed = None if judge_meta is None else min(judge_meta["parsed"].values())
+    if result["external_judge"] is not None and judge_parsed >= MIN[args.phase]["parsed"]:
+        gate_name, gate_judge = "external", result["external_judge"]
+    else:
+        gate_name, gate_judge = "self", result["self_judge"]
+    decision = decide(result["g1"], gate_judge, validity)
     with (directory / "claims.jsonl").open("w", encoding="utf-8") as stream:
         for row in records:
             stream.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -319,10 +327,13 @@ def experiment(args, directory, stages, started):
               "by_stratum": {label: sum(claim["stratum"] == label for claim in claims)
                              for label in ("known", "partial", "wrong", "unknown")}}
     summary = {**decision, **result, "validity": validity, "counts": counts, "verify": verify_meta,
-               "judge_run": judge_meta, "provenance": inputs, "gpus": gpus, "alphas": list(ALPHAS)}
+               "judge_run": judge_meta, "judge_gate": gate_name, "provenance": inputs, "gpus": gpus,
+               "alphas": list(ALPHAS)}
     if args.phase == "smoke":
         summary["run_verdict_preview"] = summary.pop("verdict")
         checks = {"stages_complete": True, **validity}
+        if judge_meta is not None:
+            checks["judge_parsed"] = judge_parsed >= MIN["smoke"]["parsed"]
         summary["smoke_checks"] = checks
         summary["verdict"] = "PASS" if all(checks.values()) else "FAIL"
     stages.finish("analysis", note=summary["verdict"])

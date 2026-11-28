@@ -1214,3 +1214,13 @@ C1 的冻结 3B 数学基座在 384 token 下截断 349/512 条。新试点从�
 - E5 检索块为 4,096 × 2,097,152。
 
 外部判官（如 Qwen2.5-32B-Instruct）可选，只作对照。 [冻结协议](protocols/claim_cert_b0.md) · [厂内指南](../docs/factory/claim_cert_b0.md)
+
+## 2026-11-28 `claim_cert_b0_v1` 修订 1（读数前）：PIVOT 门槛改用外部判官 Qwen3-32B
+
+厂内确认有 Qwen3-32B 和 ReSearch-Qwen-32B-Instruct，此时实验尚未开始。
+
+决定：
+- 用 Qwen3-32B 作外部判官，并让 J（判官误差，PIVOT 的条件）在外部判官运行完成且解析率达标时以它为准，否则退回自判官。理由：方案 B 若转向判官误差校准，需要证明更强的判官也会破坏保证，4B 自判官的说服力不够。
+- 不用 ReSearch-Qwen-32B-Instruct：它是带思考和检索标签的强化学习搜索智能体，不适合读第一个 token 的 Yes/No。
+- 带判官的这组直接作为正式运行（每个副本两卡，共两个副本），冒烟增加判官解析率检查。
+- G1、J 的门槛和其余设计不变。 [协议修订 1](protocols/claim_cert_b0.md)

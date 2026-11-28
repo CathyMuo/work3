@@ -122,6 +122,7 @@ class Policies(unittest.TestCase):
         self.assertEqual(decide(low, no_judge, validity)["verdict"], "NO-GO")
         unsafe = [{"alpha": 0.1, "target": 10, "mean_gain": 0.2, "adaptive_fdr": 0.14}]
         self.assertEqual(decide(unsafe, no_judge, validity)["verdict"], "NO-GO")
+        self.assertEqual(set(decide(go_row, no_judge, validity)), {"verdict", "g1_pass", "judge_pass"})
 
     def test_auc(self):
         self.assertEqual(auc([0.1, 0.2, 0.8, 0.9], [False, False, True, True]), 1.0)

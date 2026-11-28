@@ -10,6 +10,7 @@ import random
 from collections import Counter
 
 PROTOCOL = "claim_cert_b0_v1"
+AMENDMENT = 1  # 2026-11-28, before any reading: J uses the external judge when it ran and parsed
 ALPHAS = (0.05, 0.1, 0.2)
 DELTA = 0.1
 # 50 fixed thresholds, evenly spaced in logit space from -4 to 10 (0.018 .. 0.99995); fixed before any data
@@ -295,17 +296,18 @@ def judge_calibration(judged_splits):
     return rows
 
 
-def decide(g1_rows, self_judge, validity):
+def decide(g1_rows, judge, validity):
     """GO: adaptive retrieval keeps >= 10 points more true claims at alpha 0.1 and cost 5 or 10, with mean test FDR
-    within alpha. PIVOT: not GO, but self-judge calibration breaks the guarantee (realised FDR >= 1.5 alpha) and
-    judge false positives concentrate on confident errors (>= 10 points over non-confident ones). Else NO-GO."""
+    within alpha. PIVOT: not GO, but calibrating with the gate judge's labels breaks the guarantee (realised FDR
+    >= 1.5 alpha) and its false positives concentrate on confident errors (>= 10 points over non-confident ones).
+    Else NO-GO. The gate judge is the external judge when one ran and parsed (amendment 1), else the self-judge."""
     if not all(validity.values()):
         return {"verdict": "INCOMPLETE", "g1_pass": None, "judge_pass": None}
     g1 = [row for row in g1_rows if row["alpha"] == G1_ALPHA and row["target"] in TARGETS]
     g1_pass = any(row["mean_gain"] is not None and row["mean_gain"] >= G1_GAIN and row["adaptive_fdr"] is not None
                   and row["adaptive_fdr"] <= G1_ALPHA for row in g1)
-    ratio = self_judge["calibration"][str(G1_ALPHA)]["uniform_q3_ratio"]
-    gap = self_judge["errors"]["fp_gap_wrong_unknown"]
+    ratio = judge["calibration"][str(G1_ALPHA)]["uniform_q3_ratio"]
+    gap = judge["errors"]["fp_gap_wrong_unknown"]
     judge_pass = ratio is not None and gap is not None and ratio >= J_RATIO and gap >= J_FP_GAP
     verdict = "GO" if g1_pass else "PIVOT" if judge_pass else "NO-GO"
     return {"verdict": verdict, "g1_pass": g1_pass, "judge_pass": judge_pass}
